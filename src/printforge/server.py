@@ -13,12 +13,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from starlette.requests import Request
+from starlette.responses import Response
+
 from .pipeline import PrintForgePipeline, PipelineConfig
 from .print_optimizer import PrintOptimizer, PRINTER_PRESETS
 from .formats import SUPPORTED_FORMATS
 from .cache import ImageCache
+from .safety import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+# Global rate limiter for generation endpoints
+_rate_limiter = RateLimiter(max_requests=20, window_seconds=3600)
 
 
 # ── Pydantic Response Models ──────────────────────────────────────
@@ -181,6 +188,38 @@ class BenchmarkReportResponse(BaseModel):
     message: Optional[str] = None
 
 
+class InfoResponse(BaseModel):
+    version: str = Field(..., json_schema_extra={"example": "1.4.0"})
+    description: str = Field(..., json_schema_extra={"example": "One photo to 3D print"})
+    features: List[str] = Field(..., json_schema_extra={"example": ["image-to-3d", "text-to-3d"]})
+    supported_formats: List[str] = Field(..., json_schema_extra={"example": ["3mf", "stl", "obj"]})
+    supported_printers: Dict[str, str] = Field(default_factory=dict)
+
+
+class FailureRiskResponse(BaseModel):
+    type: str = Field(..., json_schema_extra={"example": "thin_wall"})
+    severity: str = Field(..., json_schema_extra={"example": "high"})
+    location: str = Field(..., json_schema_extra={"example": "Minimum thickness: 0.3mm"})
+    suggestion: str = Field(..., json_schema_extra={"example": "Increase wall thickness to 0.4mm"})
+
+
+class PredictResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "ok"})
+    risk_score: float = Field(..., json_schema_extra={"example": 45.0})
+    risk_level: str = Field(..., json_schema_extra={"example": "medium"})
+    risks: List[FailureRiskResponse] = Field(default_factory=list)
+
+
+class StatsResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "ok"})
+    total_events: int = Field(..., json_schema_extra={"example": 150})
+    generations: int = Field(..., json_schema_extra={"example": 42})
+    formats: Dict[str, int] = Field(default_factory=dict)
+    backends: Dict[str, int] = Field(default_factory=dict)
+    avg_duration_ms: Optional[float] = None
+    avg_quality_score: Optional[float] = None
+
+
 # ── OpenAPI tag metadata ──────────────────────────────────────────
 
 tags_metadata = [
@@ -208,6 +247,14 @@ tags_metadata = [
         "name": "Benchmark",
         "description": "Performance benchmarking endpoints.",
     },
+    {
+        "name": "Safety",
+        "description": "Content safety, rate limiting, and failure prediction.",
+    },
+    {
+        "name": "Analytics",
+        "description": "Local usage analytics and telemetry.",
+    },
 ]
 
 
@@ -215,7 +262,7 @@ app = FastAPI(
     title="PrintForge",
     description="One photo to 3D print — commercial API. Upload an image and receive a watertight, "
                 "print-ready 3D model in 3MF/STL/OBJ format.",
-    version="1.1.0",
+    version="1.4.0",
     openapi_tags=tags_metadata,
 )
 
@@ -225,6 +272,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limit generation endpoints to 20 requests/hour per IP."""
+    rate_limited_paths = {"/api/generate", "/api/text-to-3d", "/api/batch"}
+    if request.url.path in rate_limited_paths and request.method == "POST":
+        client_ip = request.client.host if request.client else "unknown"
+        allowed, remaining = _rate_limiter.check(client_ip)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Rate limit exceeded. Max 20 generations per hour."},
+                headers={"Retry-After": "3600", "X-RateLimit-Remaining": "0"},
+            )
+        response = await call_next(request)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        response.headers["X-RateLimit-Limit"] = "20"
+        return response
+    return await call_next(request)
 
 # Global pipeline instance (loaded once)
 _pipeline: Optional[PrintForgePipeline] = None
@@ -829,7 +896,7 @@ async def send_to_printer(
     response_model=HealthResponse,
 )
 async def health():
-    return {"status": "ok", "version": "1.1.0"}
+    return {"status": "ok", "version": "1.4.0"}
 
 
 @app.get(
@@ -910,6 +977,116 @@ async def benchmark_latest():
     if report is None:
         return JSONResponse({"status": "none", "message": "No benchmark report found. Run: printforge benchmark <image>"})
     return JSONResponse({"status": "ok", "report": report.to_dict()})
+
+
+# ── Info endpoint ─────────────────────────────────────────────────
+
+@app.get(
+    "/api/info",
+    tags=["System"],
+    summary="Get API info, version, and feature list",
+    description="Returns version, supported features, formats, and printers.",
+    response_model=InfoResponse,
+)
+async def api_info():
+    """Return API version, features, and capabilities."""
+    return JSONResponse({
+        "version": "1.4.0",
+        "description": "One photo to 3D print — commercial API",
+        "features": [
+            "image-to-3d",
+            "text-to-3d",
+            "multi-view-enhance",
+            "batch-processing",
+            "print-optimization",
+            "cost-estimation",
+            "part-splitting",
+            "quality-scoring",
+            "mesh-repair",
+            "failure-prediction",
+            "analytics",
+            "competitor-monitoring",
+            "content-safety",
+            "rate-limiting",
+            "bambu-lab-integration",
+            "websocket-progress",
+            "video-to-3d-frames",
+        ],
+        "supported_formats": ["3mf", "stl", "obj"],
+        "supported_printers": {k: v["name"] for k, v in PRINTER_PRESETS.items()},
+    })
+
+
+# ── Prediction endpoint ──────────────────────────────────────────
+
+@app.post(
+    "/api/predict",
+    tags=["Safety"],
+    summary="Predict print failures for a mesh",
+    description="Upload a mesh and get a failure risk score (0-100) with specific risks identified.",
+    response_model=PredictResponse,
+    responses={500: {"description": "Prediction failure"}},
+)
+async def predict_failure(
+    mesh_file: UploadFile = File(...),
+    material: str = Form("PLA"),
+    layer_height: float = Form(0.2),
+    printer: str = Form("a1"),
+):
+    """Upload a mesh and predict print failures."""
+    import trimesh
+    from .failure_predictor import FailurePredictor
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        tmp.write(content)
+        mesh_path = tmp.name
+
+    try:
+        mesh = trimesh.load(mesh_path, force="mesh")
+        predictor = FailurePredictor()
+        prediction = predictor.predict(
+            mesh, material=material, layer_height=layer_height, printer=printer,
+        )
+
+        return JSONResponse({
+            "status": "ok",
+            "risk_score": prediction.risk_score,
+            "risk_level": prediction.risk_level,
+            "risks": [
+                {
+                    "type": r.type,
+                    "severity": r.severity,
+                    "location": r.location,
+                    "suggestion": r.suggestion,
+                }
+                for r in prediction.risks
+            ],
+        })
+    except Exception as e:
+        logger.exception("Prediction failed")
+        raise HTTPException(500, f"Prediction failed: {str(e)}")
+
+
+# ── Analytics endpoint ────────────────────────────────────────────
+
+@app.get(
+    "/api/stats",
+    tags=["Analytics"],
+    summary="Get usage analytics summary",
+    description="Returns local analytics: generation counts, format/backend breakdowns, average durations.",
+    response_model=StatsResponse,
+)
+async def get_stats():
+    """Return local usage analytics."""
+    from .analytics import Analytics
+    analytics = Analytics()
+    stats = analytics.get_stats()
+    return JSONResponse({
+        "status": "ok",
+        **stats,
+    })
 
 
 # ── WebSocket progress endpoint ────────────────────────────────────

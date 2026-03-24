@@ -435,6 +435,135 @@ def cmd_download_model(args):
         sys.exit(1)
 
 
+def cmd_predict(args):
+    """Predict print failures for a mesh."""
+    _setup_logging(args.verbose)
+    import trimesh
+    from .failure_predictor import FailurePredictor
+
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists():
+        print(f"Error: File not found: {mesh_path}", file=sys.stderr)
+        sys.exit(1)
+
+    mesh = trimesh.load(str(mesh_path), force="mesh")
+    predictor = FailurePredictor()
+    prediction = predictor.predict(
+        mesh, material=args.material, layer_height=args.layer_height, printer=args.printer,
+    )
+
+    print(f"PrintForge — Failure Prediction")
+    print(f"  Model:   {mesh_path}")
+    print(f"  Printer: {args.printer}")
+    print(f"  Risk:    {prediction.risk_level.upper()} ({prediction.risk_score:.0f}/100)")
+    print()
+
+    if prediction.risks:
+        print(f"Risks identified:")
+        for r in prediction.risks:
+            icon = {"critical": "CRIT", "high": "HIGH", "medium": "MED", "low": "LOW"}[r.severity]
+            print(f"  [{icon}] {r.type}: {r.location}")
+            print(f"         → {r.suggestion}")
+    else:
+        print("No significant risks detected. Model should print successfully.")
+
+
+def cmd_competitors(args):
+    """Show competitor monitoring data."""
+    _setup_logging(args.verbose)
+    from .competitor_monitor import CompetitorMonitor
+
+    monitor = CompetitorMonitor()
+
+    # Check for updates
+    updates = monitor.check_updates()
+
+    print("PrintForge — Competitor Monitor")
+    print()
+
+    summary = monitor.get_summary()
+    for comp in summary["competitors"]:
+        print(f"  {comp['name']} ({comp['url']})")
+        print(f"    Version: {comp['version']}")
+        print(f"    Features: {', '.join(comp['features'][:3])}...")
+        pricing_summary = next(iter(comp['pricing'].values()), "N/A")
+        print(f"    Pricing: {pricing_summary}")
+        print()
+
+    if updates:
+        print(f"Changes detected ({len(updates)}):")
+        for u in updates:
+            print(f"  [{u.category.upper()}] {u.competitor}: {u.description}")
+
+
+def cmd_stats(args):
+    """Show local usage analytics."""
+    _setup_logging(args.verbose)
+    from .analytics import Analytics
+
+    analytics = Analytics()
+    stats = analytics.get_stats()
+
+    print("PrintForge — Usage Analytics")
+    print()
+    print(f"  Total events:    {stats['total_events']}")
+    print(f"  Generations:     {stats['generations']}")
+
+    if stats['avg_duration_ms']:
+        print(f"  Avg duration:    {stats['avg_duration_ms']:.0f}ms")
+    if stats['avg_quality_score']:
+        print(f"  Avg quality:     {stats['avg_quality_score']:.1f}/100")
+
+    if stats['formats']:
+        print()
+        print("  Formats:")
+        for fmt, count in stats['formats'].items():
+            print(f"    {fmt}: {count}")
+
+    if stats['backends']:
+        print()
+        print("  Backends:")
+        for backend, count in stats['backends'].items():
+            print(f"    {backend}: {count}")
+
+    if stats['recent_events']:
+        print()
+        print(f"  Recent events ({len(stats['recent_events'])}):")
+        for evt in stats['recent_events'][:5]:
+            print(f"    {evt['event_type']} — {evt.get('format', 'N/A')}")
+
+
+def cmd_video(args):
+    """Convert video to 3D model via frame extraction."""
+    _setup_logging(args.verbose)
+    from .video_to_3d import VideoTo3D
+
+    video_path = Path(args.video)
+    if not video_path.exists():
+        print(f"Error: Video not found: {video_path}", file=sys.stderr)
+        sys.exit(1)
+
+    output_path = args.output or str(video_path.with_suffix(f".{args.format}"))
+
+    print(f"PrintForge — Video to 3D")
+    print(f"  Input:  {video_path}")
+    print(f"  Output: {output_path}")
+    print(f"  Frames: {args.frames}")
+    print()
+
+    converter = VideoTo3D(num_frames=args.frames)
+    result = converter.run(str(video_path), output_path)
+
+    print(f"Extracted {result.num_frames_extracted} frames:")
+    for path in result.frame_paths:
+        print(f"  {Path(path).name}")
+    print()
+    if result.mesh_path:
+        print(f"Mesh: {result.mesh_path}")
+    else:
+        print("Multi-view reconstruction: pending (frame extraction only for now)")
+
+
 def _print_result(result):
     """Print pipeline result summary."""
     print(f"{'='*50}")
@@ -539,6 +668,34 @@ def main():
                       help="Model to download (default: triposr)")
     p_dl.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_dl.set_defaults(func=cmd_download_model)
+
+    # ── printforge predict <mesh> ──────────────────────────────────
+    p_predict = subparsers.add_parser("predict", help="Predict print failures for a mesh")
+    p_predict.add_argument("mesh", help="Input mesh file (STL/OBJ/3MF)")
+    p_predict.add_argument("--printer", default="a1", help="Printer preset (a1/x1c/p1s/prusa-mk4/ender3)")
+    p_predict.add_argument("--material", default="PLA", help="Material (PLA/PETG/ABS/TPU)")
+    p_predict.add_argument("--layer-height", type=float, default=0.2, help="Layer height in mm")
+    p_predict.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_predict.set_defaults(func=cmd_predict)
+
+    # ── printforge competitors ────────────────────────────────────
+    p_comp = subparsers.add_parser("competitors", help="Show competitor monitoring data")
+    p_comp.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_comp.set_defaults(func=cmd_competitors)
+
+    # ── printforge stats ──────────────────────────────────────────
+    p_stats = subparsers.add_parser("stats", help="Show local usage analytics")
+    p_stats.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_stats.set_defaults(func=cmd_stats)
+
+    # ── printforge video <path> ───────────────────────────────────
+    p_video = subparsers.add_parser("video", help="Convert video to 3D model via frame extraction")
+    p_video.add_argument("video", help="Input video file (mp4/mov/avi)")
+    p_video.add_argument("-o", "--output", help="Output file path")
+    p_video.add_argument("--format", choices=["3mf", "stl", "obj"], default="3mf", help="Output format")
+    p_video.add_argument("--frames", type=int, default=8, help="Number of frames to extract (default: 8)")
+    p_video.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_video.set_defaults(func=cmd_video)
 
     # ── Legacy: printforge <image> (backward compat) ────────────────
     args = parser.parse_args()
