@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrintForge — 一张照片，一键 3D 打印</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drop-zone { transition: all 0.2s; }
+        .drop-zone.dragover { border-color: #3b82f6; background: rgba(59,130,246,0.1); }
+        .spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        model-viewer { width: 100%; height: 400px; }
+    </style>
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+</head>
+<body class="bg-slate-950 text-white min-h-screen">
+    <div class="max-w-4xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                🏭 PrintForge
+            </h1>
+            <p class="text-slate-400 mt-2">一张照片，一键 3D 打印</p>
+        </div>
+
+        <!-- Mode Selector -->
+        <div class="flex gap-2 mb-6 justify-center">
+            <button onclick="setMode('image')" id="btn-image" class="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium">📷 图片转3D</button>
+            <button onclick="setMode('text')" id="btn-text" class="px-4 py-2 rounded-lg bg-slate-700 text-sm font-medium">✍️ 文字转3D</button>
+        </div>
+
+        <!-- Image Upload -->
+        <div id="mode-image">
+            <div id="drop-zone" class="drop-zone border-2 border-dashed border-slate-600 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 transition-colors">
+                <div id="upload-prompt">
+                    <p class="text-lg text-slate-300">📷 拖拽图片到这里，或点击上传</p>
+                    <p class="text-sm text-slate-500 mt-2">支持 JPG / PNG，建议物体居中、背景简洁</p>
+                </div>
+                <img id="preview" class="hidden max-h-64 mx-auto rounded-lg" />
+                <input type="file" id="file-input" class="hidden" accept="image/*" />
+            </div>
+        </div>
+
+        <!-- Text Input -->
+        <div id="mode-text" class="hidden">
+            <textarea id="text-input" rows="3" 
+                class="w-full bg-slate-800 border border-slate-600 rounded-xl p-4 text-white placeholder-slate-500"
+                placeholder="描述你想打印的物体，例如：一个猫形花瓶，高 10cm，底部要平稳"></textarea>
+        </div>
+
+        <!-- Settings -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+            <div>
+                <label class="text-xs text-slate-400">尺寸 (mm)</label>
+                <input type="number" id="size" value="50" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+                <label class="text-xs text-slate-400">格式</label>
+                <select id="format" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                    <option value="3mf">3MF (推荐)</option>
+                    <option value="stl">STL</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-xs text-slate-400">精度</label>
+                <select id="resolution" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+                    <option value="128">快速 (128)</option>
+                    <option value="256" selected>标准 (256)</option>
+                    <option value="512">精细 (512)</option>
+                </select>
+            </div>
+            <div class="flex items-end">
+                <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" id="add-base" class="rounded" />
+                    <span>添加底座</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Generate Button -->
+        <button id="generate-btn" onclick="generate()" 
+            class="w-full mt-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-xl font-semibold text-lg hover:opacity-90 transition disabled:opacity-50"
+            disabled>
+            🚀 生成 3D 模型
+        </button>
+
+        <!-- Progress -->
+        <div id="progress" class="hidden mt-6">
+            <div class="flex items-center gap-3">
+                <div class="spinner w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+                <span id="progress-text" class="text-slate-300">处理中...</span>
+            </div>
+            <div class="mt-2 h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-500" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Result -->
+        <div id="result" class="hidden mt-6">
+            <div class="bg-slate-800 rounded-xl p-6">
+                <h3 class="text-lg font-semibold mb-4">✅ 生成完成</h3>
+                
+                <!-- 3D Preview -->
+                <div id="preview-3d" class="bg-slate-900 rounded-lg mb-4">
+                    <model-viewer id="model-viewer" 
+                        camera-controls touch-action="pan-y"
+                        auto-rotate shadow-intensity="1"
+                        style="width:100%;height:400px;background:#0f172a;">
+                    </model-viewer>
+                </div>
+                
+                <!-- Stats -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="bg-slate-900 rounded-lg p-3">
+                        <div class="text-xs text-slate-500">顶点数</div>
+                        <div id="stat-vertices" class="text-lg font-bold">-</div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3">
+                        <div class="text-xs text-slate-500">面数</div>
+                        <div id="stat-faces" class="text-lg font-bold">-</div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3">
+                        <div class="text-xs text-slate-500">防水性</div>
+                        <div id="stat-watertight" class="text-lg font-bold">-</div>
+                    </div>
+                    <div class="bg-slate-900 rounded-lg p-3">
+                        <div class="text-xs text-slate-500">耗时</div>
+                        <div id="stat-time" class="text-lg font-bold">-</div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex gap-3">
+                    <a id="download-btn" class="flex-1 py-2 bg-blue-600 rounded-lg text-center font-medium hover:bg-blue-500">
+                        📥 下载文件
+                    </a>
+                    <button onclick="sendToBambu()" class="flex-1 py-2 bg-green-600 rounded-lg font-medium hover:bg-green-500">
+                        🖨️ 发送到拓竹
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const API = window.location.origin;
+    let currentMode = 'image';
+    let selectedFile = null;
+
+    function setMode(mode) {
+        currentMode = mode;
+        document.getElementById('mode-image').classList.toggle('hidden', mode !== 'image');
+        document.getElementById('mode-text').classList.toggle('hidden', mode !== 'text');
+        document.getElementById('btn-image').className = `px-4 py-2 rounded-lg text-sm font-medium ${mode === 'image' ? 'bg-blue-600' : 'bg-slate-700'}`;
+        document.getElementById('btn-text').className = `px-4 py-2 rounded-lg text-sm font-medium ${mode === 'text' ? 'bg-blue-600' : 'bg-slate-700'}`;
+        updateGenerateButton();
+    }
+
+    // File upload
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    
+    dropZone.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => handleFile(e.target.files[0]);
+    
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+    dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+    dropZone.ondrop = (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); };
+
+    function handleFile(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        selectedFile = file;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const preview = document.getElementById('preview');
+            preview.src = e.target.result;
+            preview.classList.remove('hidden');
+            document.getElementById('upload-prompt').classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+        updateGenerateButton();
+    }
+
+    function updateGenerateButton() {
+        const btn = document.getElementById('generate-btn');
+        if (currentMode === 'image') {
+            btn.disabled = !selectedFile;
+        } else {
+            btn.disabled = !document.getElementById('text-input').value.trim();
+        }
+    }
+
+    document.getElementById('text-input').oninput = updateGenerateButton;
+
+    async function generate() {
+        const progress = document.getElementById('progress');
+        const result = document.getElementById('result');
+        const btn = document.getElementById('generate-btn');
+        
+        progress.classList.remove('hidden');
+        result.classList.add('hidden');
+        btn.disabled = true;
+
+        const stages = ['图片分析中...', 'AI 推理中...', 'SDF 转换中...', '打印优化中...', '导出文件...'];
+        for (let i = 0; i < stages.length; i++) {
+            document.getElementById('progress-text').textContent = stages[i];
+            document.getElementById('progress-bar').style.width = `${(i + 1) / stages.length * 100}%`;
+            await new Promise(r => setTimeout(r, 500));
+        }
+
+        try {
+            let endpoint, body;
+            if (currentMode === 'image') {
+                const formData = new FormData();
+                formData.append('image', selectedFile);
+                formData.append('format', document.getElementById('format').value);
+                formData.append('size_mm', document.getElementById('size').value);
+                formData.append('add_base', document.getElementById('add-base').checked);
+                endpoint = '/api/generate';
+                body = formData;
+            } else {
+                endpoint = '/api/text-to-3d';
+                body = JSON.stringify({ text: document.getElementById('text-input').value, format: document.getElementById('format').value });
+            }
+
+            const resp = await fetch(API + endpoint, {
+                method: 'POST',
+                body: body,
+                headers: currentMode === 'text' ? { 'Content-Type': 'application/json' } : undefined,
+            });
+
+            if (!resp.ok) throw new Error(await resp.text());
+
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            
+            // Update stats
+            document.getElementById('stat-vertices').textContent = resp.headers.get('X-PrintForge-Vertices') || '?';
+            document.getElementById('stat-faces').textContent = resp.headers.get('X-PrintForge-Faces') || '?';
+            document.getElementById('stat-watertight').textContent = resp.headers.get('X-PrintForge-Watertight') === 'True' ? '✅' : '⚠️';
+            document.getElementById('stat-time').textContent = `${(parseInt(resp.headers.get('X-PrintForge-Duration-Ms') || '0') / 1000).toFixed(1)}s`;
+
+            // Download link
+            const ext = document.getElementById('format').value;
+            document.getElementById('download-btn').href = url;
+            document.getElementById('download-btn').download = `printforge_output.${ext}`;
+
+            // 3D preview (if GLB)
+            try {
+                document.getElementById('model-viewer').src = url;
+            } catch(e) {}
+
+            result.classList.remove('hidden');
+        } catch (e) {
+            alert('生成失败: ' + e.message);
+        } finally {
+            progress.classList.add('hidden');
+            btn.disabled = false;
+        }
+    }
+
+    function sendToBambu() {
+        alert('🖨️ 拓竹直连功能开发中...\n\n目前请手动将文件导入 Bambu Studio。');
+    }
+    </script>
+</body>
+</html>

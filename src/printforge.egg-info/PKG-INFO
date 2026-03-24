@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: printforge
+Version: 0.2.0
+Summary: One photo to 3D print. Open-source, local, print-optimized.
+License: MIT
+Requires-Python: >=3.9
+Requires-Dist: torch>=2.0
+Requires-Dist: torchvision
+Requires-Dist: trimesh>=4.0
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: shapely
+Requires-Dist: mapbox-earcut
+Requires-Dist: Pillow
+Requires-Dist: requests
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: python-multipart
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"

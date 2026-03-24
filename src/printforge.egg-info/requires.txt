@@ -1,0 +1,16 @@
+torch>=2.0
+torchvision
+trimesh>=4.0
+numpy
+scipy
+shapely
+mapbox-earcut
+Pillow
+requests
+fastapi
+uvicorn
+python-multipart
+
+[dev]
+pytest
+ruff

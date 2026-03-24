@@ -1,0 +1,2 @@
+[console_scripts]
+printforge = printforge.cli:main

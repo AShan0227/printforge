@@ -1,19 +1,23 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "printforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "One photo to 3D print. Open-source, local, print-optimized."
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 dependencies = [
     "torch>=2.0",
     "torchvision",
     "trimesh>=4.0",
     "numpy",
+    "scipy",
+    "shapely",
+    "mapbox-earcut",
     "Pillow",
+    "requests",
     "fastapi",
     "uvicorn",
     "python-multipart",
