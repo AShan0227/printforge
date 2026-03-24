@@ -233,6 +233,104 @@ def cmd_split(args):
     print(f"Split into {result.num_parts} parts. All fit: {result.fits_in_volume}")
 
 
+def cmd_batch(args):
+    """Batch process a directory of images to 3D models."""
+    _setup_logging(args.verbose)
+    from .batch import BatchProcessor
+
+    input_dir = Path(args.input_dir)
+    if not input_dir.is_dir():
+        print(f"Error: Not a directory: {input_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    image_paths = BatchProcessor.collect_images(str(input_dir))
+    if not image_paths:
+        print(f"No images found in {input_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    output_dir = args.output or str(input_dir / "output")
+    fmt = args.format
+
+    config = PipelineConfig(device=args.device, scale_mm=args.size)
+    processor = BatchProcessor(config=config, max_workers=args.workers)
+
+    print(f"PrintForge — Batch Processing")
+    print(f"  Input:   {input_dir} ({len(image_paths)} images)")
+    print(f"  Output:  {output_dir}")
+    print(f"  Format:  {fmt}")
+    print(f"  Workers: {args.workers}")
+    print()
+
+    def on_progress(done, total, item):
+        status = "OK" if item.success else f"FAIL: {item.error}"
+        print(f"  [{done}/{total}] {Path(item.input_path).name} — {status}")
+
+    result = processor.process(image_paths, output_dir, fmt, progress_callback=on_progress)
+    print()
+    print(f"Done: {result.succeeded} succeeded, {result.failed} failed, {result.total_duration_ms:.0f}ms total")
+
+
+def cmd_quality(args):
+    """Score mesh quality for 3D printing."""
+    _setup_logging(args.verbose)
+    import trimesh
+    from .quality import QualityScorer
+
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists():
+        print(f"Error: File not found: {mesh_path}", file=sys.stderr)
+        sys.exit(1)
+
+    mesh = trimesh.load(str(mesh_path), force="mesh")
+    scorer = QualityScorer()
+    report = scorer.score(mesh)
+
+    print(f"PrintForge — Quality Score")
+    print(f"  Model:  {mesh_path}")
+    print(f"  Grade:  {report.grade} ({report.total_score}/100)")
+    print()
+    print(f"Breakdown:")
+    print(f"  Watertight:    {report.watertight_score}/30  ({'Yes' if report.is_watertight else 'No'})")
+    print(f"  Face count:    {report.face_count_score}/20  ({report.face_count:,} faces)")
+    print(f"  Aspect ratio:  {report.aspect_ratio_score}/15  ({report.aspect_ratio:.1f})")
+    print(f"  Thin walls:    {report.thin_wall_score}/20  (min {report.min_thickness_mm:.2f}mm)")
+    print(f"  Overhangs:     {report.overhang_score}/15  ({report.overhang_percentage:.1f}%)")
+
+
+def cmd_repair(args):
+    """Repair a broken mesh."""
+    _setup_logging(args.verbose)
+    import trimesh
+    from .repair import MeshRepair
+
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists():
+        print(f"Error: File not found: {mesh_path}", file=sys.stderr)
+        sys.exit(1)
+
+    mesh = trimesh.load(str(mesh_path), force="mesh")
+    output_path = args.output or str(mesh_path.with_stem(mesh_path.stem + "_fixed"))
+
+    repairer = MeshRepair(voxel_resolution=args.resolution)
+    repaired, report = repairer.repair(mesh)
+
+    repaired.export(output_path, file_type=Path(output_path).suffix.lstrip(".") or "stl")
+
+    print(f"PrintForge — Mesh Repair")
+    print(f"  Input:  {mesh_path}")
+    print(f"  Output: {output_path}")
+    print()
+    print(f"  Watertight: {report.was_watertight_before} → {report.is_watertight_after}")
+    print(f"  Faces:      {report.input_faces:,} → {report.output_faces:,}")
+    print(f"  Vertices:   {report.input_vertices:,} → {report.output_vertices:,}")
+    if report.used_voxel_remesh:
+        print(f"  Voxel remesh applied (resolution {args.resolution})")
+    print()
+    print(f"Repairs performed:")
+    for r in report.repairs_performed:
+        print(f"  - {r}")
+
+
 def _print_result(result):
     """Print pipeline result summary."""
     print(f"{'='*50}")
@@ -301,6 +399,27 @@ def main():
     p_split.add_argument("-o", "--output", help="Output directory for split parts")
     p_split.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_split.set_defaults(func=cmd_split)
+
+    # ── printforge batch <input_dir> ──────────────────────────────────
+    p_batch = subparsers.add_parser("batch", help="Batch process images to 3D models")
+    p_batch.add_argument("input_dir", help="Directory containing images")
+    _add_common_args(p_batch)
+    p_batch.add_argument("--workers", type=int, default=3, help="Max parallel workers (default: 3)")
+    p_batch.set_defaults(func=cmd_batch)
+
+    # ── printforge quality <mesh> ──────────────────────────────────
+    p_quality = subparsers.add_parser("quality", help="Score mesh quality for 3D printing")
+    p_quality.add_argument("mesh", help="Input mesh file (STL/OBJ/3MF)")
+    p_quality.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_quality.set_defaults(func=cmd_quality)
+
+    # ── printforge repair <mesh> ───────────────────────────────────
+    p_repair = subparsers.add_parser("repair", help="Repair a broken mesh for printing")
+    p_repair.add_argument("mesh", help="Input mesh file (STL/OBJ/3MF)")
+    p_repair.add_argument("-o", "--output", help="Output file path")
+    p_repair.add_argument("--resolution", type=int, default=128, help="Voxel remesh resolution")
+    p_repair.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_repair.set_defaults(func=cmd_repair)
 
     # ── Legacy: printforge <image> (backward compat) ────────────────
     args = parser.parse_args()

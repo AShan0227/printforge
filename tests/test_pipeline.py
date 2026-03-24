@@ -142,7 +142,7 @@ class TestMultiView:
             assert v.size == (256, 256)
 
     def test_save_views(self, test_image, tmp_path):
-        enhancer = MultiViewEnhancer(MultiViewConfig(num_views=3))
+        enhancer = MultiViewEnhancer(MultiViewConfig(num_views=3, backend="placeholder"))
         views = enhancer.generate_views(test_image)
         paths = enhancer.save_views(views, str(tmp_path / "views"))
         assert len(paths) == 3

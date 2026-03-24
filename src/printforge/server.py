@@ -113,6 +113,42 @@ class SplitResponse(BaseModel):
     parts: List[SplitPartInfo]
 
 
+class QualityResponse(BaseModel):
+    status: str
+    total_score: float
+    grade: str
+    watertight: Dict[str, Any]
+    face_count: Dict[str, Any]
+    aspect_ratio: Dict[str, Any]
+    thin_walls: Dict[str, Any]
+    overhangs: Dict[str, Any]
+
+
+class RepairResponse(BaseModel):
+    status: str
+    was_watertight: bool
+    is_watertight: bool
+    faces_before: int
+    faces_after: int
+    repairs: List[str]
+    used_voxel_remesh: bool
+
+
+class BatchItemResponse(BaseModel):
+    filename: str
+    success: bool
+    error: Optional[str] = None
+
+
+class BatchResponse(BaseModel):
+    status: str
+    total: int
+    succeeded: int
+    failed: int
+    duration_ms: float
+    items: List[BatchItemResponse]
+
+
 class FormatsResponse(BaseModel):
     formats: Dict[str, Any]
     printers: Dict[str, str]
@@ -556,6 +592,155 @@ async def split(
     except Exception as e:
         logger.exception("Split failed")
         raise HTTPException(500, f"Split failed: {str(e)}")
+
+
+# ── Quality endpoint ──────────────────────────────────────────────
+
+@app.post(
+    "/api/quality",
+    tags=["Optimization"],
+    summary="Score mesh quality for 3D printing",
+    description="Upload a mesh and get a quality score (0-100) with per-metric breakdown.",
+    response_model=QualityResponse,
+    responses={500: {"description": "Quality scoring failure"}},
+)
+async def quality_score(mesh_file: UploadFile = File(...)):
+    """Upload a mesh and get a quality score."""
+    import trimesh
+    from .quality import QualityScorer
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        tmp.write(content)
+        mesh_path = tmp.name
+
+    try:
+        mesh = trimesh.load(mesh_path, force="mesh")
+        scorer = QualityScorer()
+        report = scorer.score(mesh)
+
+        return JSONResponse({
+            "status": "ok",
+            "total_score": report.total_score,
+            "grade": report.grade,
+            "watertight": {"score": report.watertight_score, "max": 30, "value": report.is_watertight},
+            "face_count": {"score": report.face_count_score, "max": 20, "value": report.face_count},
+            "aspect_ratio": {"score": report.aspect_ratio_score, "max": 15, "value": report.aspect_ratio},
+            "thin_walls": {"score": report.thin_wall_score, "max": 20, "min_mm": report.min_thickness_mm},
+            "overhangs": {"score": report.overhang_score, "max": 15, "percentage": report.overhang_percentage},
+        })
+    except Exception as e:
+        logger.exception("Quality scoring failed")
+        raise HTTPException(500, f"Quality scoring failed: {str(e)}")
+
+
+# ── Repair endpoint ──────────────────────────────────────────────
+
+@app.post(
+    "/api/repair",
+    tags=["Optimization"],
+    summary="Repair a broken mesh for 3D printing",
+    description="Upload a broken mesh and receive a repaired, watertight version.",
+    response_class=FileResponse,
+    responses={
+        200: {"description": "The repaired mesh file"},
+        500: {"description": "Repair failure"},
+    },
+)
+async def repair_mesh(mesh_file: UploadFile = File(...)):
+    """Upload a broken mesh and get a repaired version."""
+    import trimesh
+    from .repair import MeshRepair
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        tmp.write(content)
+        mesh_path = tmp.name
+
+    try:
+        mesh = trimesh.load(mesh_path, force="mesh")
+        repairer = MeshRepair()
+        repaired, report = repairer.repair(mesh)
+
+        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tmp_out:
+            repaired.export(tmp_out.name, file_type="stl")
+            output_path = tmp_out.name
+
+        return FileResponse(
+            output_path,
+            media_type="application/octet-stream",
+            filename="repaired.stl",
+            headers={
+                "X-PrintForge-Watertight-Before": str(report.was_watertight_before),
+                "X-PrintForge-Watertight-After": str(report.is_watertight_after),
+                "X-PrintForge-Repairs": str(len(report.repairs_performed)),
+                "X-PrintForge-Voxel-Remesh": str(report.used_voxel_remesh),
+            },
+        )
+    except Exception as e:
+        logger.exception("Repair failed")
+        raise HTTPException(500, f"Repair failed: {str(e)}")
+
+
+# ── Batch endpoint ───────────────────────────────────────────────
+
+@app.post(
+    "/api/batch",
+    tags=["Generation"],
+    summary="Batch process multiple images to 3D models",
+    description="Upload multiple images and receive per-item processing results.",
+    response_model=BatchResponse,
+    responses={500: {"description": "Batch processing failure"}},
+)
+async def batch_process(
+    images: List[UploadFile] = File(...),
+    format: str = Form("3mf"),
+    size_mm: float = Form(50.0),
+):
+    """Upload multiple images for batch 3D generation."""
+    from .batch import BatchProcessor
+
+    with tempfile.TemporaryDirectory() as tmp_input, \
+         tempfile.TemporaryDirectory() as tmp_output:
+
+        image_paths = []
+        for img in images:
+            if not img.content_type or not img.content_type.startswith("image/"):
+                continue
+            suffix = Path(img.filename or "upload.jpg").suffix or ".jpg"
+            path = Path(tmp_input) / f"{len(image_paths):04d}{suffix}"
+            content = await img.read()
+            path.write_bytes(content)
+            image_paths.append(str(path))
+
+        if not image_paths:
+            raise HTTPException(400, "No valid images provided")
+
+        try:
+            config = PipelineConfig(scale_mm=size_mm, output_format=format)
+            processor = BatchProcessor(config=config, max_workers=3)
+            result = processor.process(image_paths, tmp_output, format)
+
+            return JSONResponse({
+                "status": "ok",
+                "total": len(result.items),
+                "succeeded": result.succeeded,
+                "failed": result.failed,
+                "duration_ms": round(result.total_duration_ms, 0),
+                "items": [
+                    {
+                        "filename": Path(item.input_path).name,
+                        "success": item.success,
+                        "error": item.error,
+                    }
+                    for item in result.items
+                ],
+            })
+        except Exception as e:
+            logger.exception("Batch processing failed")
+            raise HTTPException(500, f"Batch processing failed: {str(e)}")
 
 
 # ── Printer endpoints ─────────────────────────────────────────────
