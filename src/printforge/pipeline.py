@@ -6,6 +6,8 @@ Image → TripoSR Inference → SDF Conversion → Marching Cubes → Watertight
 Each stage is a standalone function, composable into the full pipeline.
 """
 
+import io
+import os
 import time
 import logging
 from pathlib import Path
@@ -13,8 +15,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+import requests
 
 logger = logging.getLogger(__name__)
+
+
+HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/TripoSR"
 
 
 @dataclass
@@ -22,17 +28,22 @@ class PipelineConfig:
     """Configuration for the PrintForge pipeline."""
     # TripoSR inference
     model_name: str = "stabilityai/TripoSR"
-    device: str = "cuda"  # "cuda" or "cpu"
-    
+    device: str = "cuda"  # "cuda", "cpu", or "mps"
+    inference_backend: str = "auto"  # "auto", "api", "local", "placeholder"
+
+    # Background removal
+    remove_background: bool = True
+    foreground_ratio: float = 0.85
+
     # SDF / Marching Cubes
     mc_resolution: int = 256  # Marching cubes grid resolution
-    
+
     # Print optimization
     min_wall_thickness_mm: float = 0.4  # FDM minimum
     max_faces: int = 200_000  # Simplify if exceeding
     add_base: bool = False  # Add flat base for easier printing
     base_height_mm: float = 2.0
-    
+
     # Output
     output_format: str = "3mf"  # "3mf" or "stl"
     scale_mm: float = 50.0  # Default size in mm
@@ -58,39 +69,61 @@ class PrintForgePipeline:
         self.config = config or PipelineConfig()
         self._model = None
     
-    def run(self, image_path: str, output_path: str) -> PipelineResult:
-        """Execute the full pipeline."""
+    def run(self, image_path: str, output_path: str, progress_callback=None) -> PipelineResult:
+        """Execute the full pipeline.
+
+        Args:
+            progress_callback: Optional callable(stage: str, progress: float)
+                               for real-time progress updates.
+        """
+        def _progress(stage: str, pct: float):
+            if progress_callback:
+                progress_callback(stage, pct)
+
         start = time.time()
         stages = {}
         warnings = []
-        
+
         # Stage 1: Load and preprocess image
         logger.info("Stage 1: Loading image...")
+        _progress("load_image", 0.0)
         t0 = time.time()
         image = self._load_image(image_path)
         stages["load_image"] = time.time() - t0
-        
+
+        # Stage 1.5: Background removal
+        if self.config.remove_background:
+            logger.info("Stage 1.5: Removing background...")
+            _progress("remove_background", 0.15)
+            t0 = time.time()
+            image = self._remove_background(image)
+            stages["remove_background"] = time.time() - t0
+
         # Stage 2: TripoSR inference → raw mesh
         logger.info("Stage 2: TripoSR inference...")
+        _progress("inference", 0.25)
         t0 = time.time()
         raw_mesh = self._infer_3d(image)
         stages["inference"] = time.time() - t0
         
         # Stage 3: SDF conversion → watertight mesh
         logger.info("Stage 3: SDF watertight conversion...")
+        _progress("watertight", 0.50)
         t0 = time.time()
         watertight_mesh = self._make_watertight(raw_mesh)
         stages["watertight"] = time.time() - t0
-        
+
         # Stage 4: Print optimization
         logger.info("Stage 4: Print optimization...")
+        _progress("optimization", 0.70)
         t0 = time.time()
         optimized_mesh, opt_warnings = self._optimize_for_print(watertight_mesh)
         warnings.extend(opt_warnings)
         stages["optimization"] = time.time() - t0
-        
+
         # Stage 5: Export
         logger.info("Stage 5: Exporting...")
+        _progress("export", 0.90)
         t0 = time.time()
         self._export(optimized_mesh, output_path)
         stages["export"] = time.time() - t0
@@ -108,6 +141,7 @@ class PrintForgePipeline:
             warnings=warnings,
         )
         
+        _progress("done", 1.0)
         logger.info(f"Pipeline complete: {result.vertices} vertices, {result.faces} faces, "
                      f"watertight={result.is_watertight}, {total_ms:.0f}ms")
         return result
@@ -119,33 +153,123 @@ class PrintForgePipeline:
         # TripoSR expects 512x512
         img = img.resize((512, 512), Image.LANCZOS)
         return img
-    
-    def _infer_3d(self, image):
-        """Run TripoSR inference to get raw 3D mesh."""
+
+    def _remove_background(self, image):
+        """Remove background using rembg for cleaner TripoSR inference."""
         try:
-            # Try to use TripoSR
+            from rembg import remove as rembg_remove
+        except ImportError:
+            logger.warning("rembg not installed — skipping background removal")
+            return image
+
+        # rembg returns RGBA
+        result = rembg_remove(image)
+        # Composite onto neutral gray background (TripoSR convention)
+        result_np = np.array(result).astype(np.float32) / 255.0
+        rgb = result_np[:, :, :3]
+        alpha = result_np[:, :, 3:4]
+        composited = rgb * alpha + (1 - alpha) * 0.5
+
+        from PIL import Image as PILImage
+        # Resize foreground to fill ~85% of frame
+        composited_img = PILImage.fromarray(
+            (composited * 255.0).astype(np.uint8)
+        ).convert("RGB")
+        return composited_img
+
+    def _infer_3d(self, image):
+        """Run TripoSR inference using the configured backend."""
+        backend = self.config.inference_backend
+
+        if backend == "placeholder":
+            logger.info("Using placeholder mesh (configured)")
+            return self._create_placeholder_mesh()
+
+        if backend in ("auto", "api"):
+            mesh = self._infer_hf_api(image)
+            if mesh is not None:
+                return mesh
+            if backend == "api":
+                raise RuntimeError("HuggingFace API inference failed and backend is 'api'")
+
+        if backend in ("auto", "local"):
+            mesh = self._infer_local(image)
+            if mesh is not None:
+                return mesh
+            if backend == "local":
+                raise RuntimeError("Local TripoSR inference failed and backend is 'local'")
+
+        # auto fallback to placeholder
+        logger.warning("All inference backends unavailable — using placeholder mesh")
+        return self._create_placeholder_mesh()
+
+    def _infer_hf_api(self, image):
+        """Run inference via HuggingFace Inference API."""
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            logger.info("HF_TOKEN not set — skipping HuggingFace API backend")
+            return None
+
+        try:
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            image_bytes = buf.getvalue()
+
+            resp = requests.post(
+                HF_API_URL,
+                headers={"Authorization": f"Bearer {hf_token}"},
+                data=image_bytes,
+                timeout=120,
+            )
+            resp.raise_for_status()
+
+            # Response is GLB binary — load via trimesh
+            import trimesh
+            glb_data = io.BytesIO(resp.content)
+            mesh = trimesh.load(glb_data, file_type="glb", force="mesh")
+            logger.info(f"HF API inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+            return mesh
+        except Exception as e:
+            logger.warning(f"HuggingFace API inference failed: {e}")
+            return None
+
+    def _infer_local(self, image):
+        """Run inference using local TripoSR model."""
+        try:
             from tsr.system import TSR
+            import torch
+        except ImportError:
+            logger.info("tsr package not available — skipping local backend")
+            return None
+
+        try:
             if self._model is None:
-                logger.info(f"Loading TripoSR model: {self.config.model_name}")
+                # Pick best available device
+                device = self.config.device
+                if device == "cuda" and not torch.cuda.is_available():
+                    device = "mps" if torch.backends.mps.is_available() else "cpu"
+                elif device == "mps" and not torch.backends.mps.is_available():
+                    device = "cpu"
+                self.config.device = device
+
+                logger.info(f"Loading TripoSR model: {self.config.model_name} on {device}")
                 self._model = TSR.from_pretrained(
                     self.config.model_name,
                     config_name="config.yaml",
                     weight_name="model.ckpt",
                 )
-                self._model.to(self.config.device)
-            
-            with __import__("torch").no_grad():
+                self._model.to(device)
+
+            with torch.no_grad():
                 scene = self._model(image, device=self.config.device)
-            
-            mesh = scene.get_mesh(
-                resolution=self.config.mc_resolution,
-            )
+
+            mesh = scene.get_mesh(resolution=self.config.mc_resolution)
+            logger.info(f"Local inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
             return mesh
-            
-        except ImportError:
-            logger.warning("TripoSR not installed. Using placeholder mesh for testing.")
-            return self._create_placeholder_mesh()
-    
+        except Exception as e:
+            logger.warning(f"Local TripoSR inference failed: {e}")
+            return None
+
     def _create_placeholder_mesh(self):
         """Create a simple cube mesh for testing without TripoSR."""
         import trimesh

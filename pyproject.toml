@@ -25,6 +25,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+bg = ["rembg"]
+ws = ["websockets"]
 
 [project.scripts]
 printforge = "printforge.cli:main"

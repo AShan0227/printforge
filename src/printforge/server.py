@@ -1,12 +1,15 @@
 """PrintForge Web API — Upload image, get 3D print file."""
 
+import asyncio
+import json
 import tempfile
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .pipeline import PrintForgePipeline, PipelineConfig
 from .print_optimizer import PrintOptimizer, PRINTER_PRESETS
@@ -288,18 +291,135 @@ async def list_formats():
     })
 
 
-def start():
-    """Start the web server."""
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# ── Printer discovery & send ───────────────────────────────────────
+
+@app.get("/api/printers")
+async def discover_printers():
+    """Discover Bambu Lab printers on the local network via SSDP."""
+    from .bambu import BambuConnection, BambuPrinter
+
+    conn = BambuConnection(BambuPrinter(ip="", access_code=""))
+    found = conn.discover(timeout=3.0)
+    return JSONResponse({"printers": found})
 
 
-# Mount static web UI
+@app.post("/api/printers/send")
+async def send_to_printer(
+    file: UploadFile = File(...),
+    printer_ip: str = Form(...),
+    access_code: str = Form(...),
+):
+    """Send a 3MF/gcode file to a Bambu printer by IP."""
+    from .bambu import BambuConnection, BambuPrinter, PrintJob
+
+    suffix = Path(file.filename or "model.3mf").suffix or ".3mf"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        file_path = tmp.name
+
+    printer = BambuPrinter(ip=printer_ip, access_code=access_code)
+    conn = BambuConnection(printer)
+
+    connected = conn.connect()
+    if not connected:
+        raise HTTPException(502, f"Cannot reach printer at {printer_ip}")
+
+    job = PrintJob(file_path=file_path)
+    success = conn.send_print(job)
+    if not success:
+        raise HTTPException(500, "Failed to send print job")
+
+    return JSONResponse({"status": "ok", "message": f"Print job sent to {printer_ip}"})
+
+
+# ── WebSocket progress endpoint ────────────────────────────────────
+
+@app.websocket("/ws/progress")
+async def ws_progress(websocket: WebSocket):
+    """WebSocket endpoint for real-time pipeline progress.
+
+    Client sends a JSON message to start generation:
+        {"action": "generate", "format": "3mf", "size_mm": 50, "add_base": false}
+    Then streams progress updates:
+        {"stage": "inference", "progress": 0.25}
+    And a final completion message:
+        {"stage": "done", "progress": 1.0, "result": {...}}
+    """
+    await websocket.accept()
+
+    try:
+        msg = await websocket.receive_json()
+        if msg.get("action") != "generate":
+            await websocket.send_json({"error": "Unknown action"})
+            await websocket.close()
+            return
+
+        # Expect the image was uploaded via /api/generate first,
+        # or a path is provided. For simplicity, stream progress
+        # for a pipeline run referenced by temp path.
+        image_path = msg.get("image_path")
+        if not image_path:
+            await websocket.send_json({"error": "image_path required"})
+            await websocket.close()
+            return
+
+        fmt = msg.get("format", "3mf")
+        output_suffix = ".3mf" if fmt == "3mf" else ".stl"
+        with tempfile.NamedTemporaryFile(suffix=output_suffix, delete=False) as tmp_out:
+            output_path = tmp_out.name
+
+        pipeline = get_pipeline()
+        pipeline.config.output_format = fmt
+        pipeline.config.scale_mm = msg.get("size_mm", 50.0)
+        pipeline.config.add_base = msg.get("add_base", False)
+
+        loop = asyncio.get_event_loop()
+
+        async def send_progress(stage: str, progress: float):
+            await websocket.send_json({"stage": stage, "progress": progress})
+
+        def progress_callback(stage: str, progress: float):
+            asyncio.run_coroutine_threadsafe(send_progress(stage, progress), loop)
+
+        result = await loop.run_in_executor(
+            None, lambda: pipeline.run(image_path, output_path, progress_callback=progress_callback)
+        )
+
+        await websocket.send_json({
+            "stage": "done",
+            "progress": 1.0,
+            "result": {
+                "mesh_path": result.mesh_path,
+                "vertices": result.vertices,
+                "faces": result.faces,
+                "is_watertight": result.is_watertight,
+                "duration_ms": result.duration_ms,
+            },
+        })
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.exception("WebSocket error")
+        try:
+            await websocket.send_json({"error": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ── Static files & startup ─────────────────────────────────────────
+
 import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
 if os.path.isdir(_web_dir):
     from fastapi.responses import HTMLResponse
-    
+
     @app.get("/", response_class=HTMLResponse)
     async def web_ui():
         index_path = os.path.join(_web_dir, "index.html")
@@ -307,3 +427,12 @@ if os.path.isdir(_web_dir):
             with open(index_path) as f:
                 return f.read()
         return "<h1>PrintForge</h1><p>Web UI not found.</p>"
+
+    # Serve all static assets (JS, CSS, images) from web/
+    app.mount("/static", StaticFiles(directory=_web_dir), name="static")
+
+
+def start():
+    """Start the web server."""
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
