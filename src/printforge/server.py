@@ -171,6 +171,16 @@ class CacheStatsResponse(BaseModel):
     num_entries: int = Field(..., description="Number of cached mesh entries")
 
 
+class TermsResponse(BaseModel):
+    text: str
+
+
+class BenchmarkReportResponse(BaseModel):
+    status: str
+    report: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
+
+
 # ── OpenAPI tag metadata ──────────────────────────────────────────
 
 tags_metadata = [
@@ -189,6 +199,14 @@ tags_metadata = [
     {
         "name": "System",
         "description": "Health checks, supported formats, and cache management.",
+    },
+    {
+        "name": "Legal",
+        "description": "Terms of service and acceptance tracking.",
+    },
+    {
+        "name": "Benchmark",
+        "description": "Performance benchmarking endpoints.",
     },
 ]
 
@@ -847,6 +865,51 @@ async def cache_stats():
         "size_bytes": s.size_bytes,
         "num_entries": s.num_entries,
     })
+
+
+# ── Terms of Service endpoints ─────────────────────────────────────
+
+@app.get(
+    "/api/terms",
+    tags=["Legal"],
+    summary="Get Terms of Service",
+    description="Returns the full Terms of Service text.",
+    response_model=TermsResponse,
+)
+async def get_terms():
+    """Return the Terms of Service."""
+    from .legal import get_tos
+    return JSONResponse({"text": get_tos()})
+
+
+@app.get(
+    "/api/terms/accept",
+    tags=["Legal"],
+    summary="Confirm TOS acceptance",
+    description="Returns a confirmation that TOS acceptance was recorded. "
+                "Actual tracking is done client-side via localStorage.",
+)
+async def accept_terms():
+    """Acknowledge TOS acceptance (tracking is client-side via localStorage)."""
+    return JSONResponse({"status": "accepted", "message": "Terms accepted. Tracked in browser localStorage."})
+
+
+# ── Benchmark endpoints ───────────────────────────────────────────
+
+@app.get(
+    "/api/benchmark/latest",
+    tags=["Benchmark"],
+    summary="Get latest benchmark report",
+    description="Returns the most recently saved benchmark report, if any.",
+    response_model=BenchmarkReportResponse,
+)
+async def benchmark_latest():
+    """Return the latest benchmark report."""
+    from .benchmark import BenchmarkSuite
+    report = BenchmarkSuite.load_latest()
+    if report is None:
+        return JSONResponse({"status": "none", "message": "No benchmark report found. Run: printforge benchmark <image>"})
+    return JSONResponse({"status": "ok", "report": report.to_dict()})
 
 
 # ── WebSocket progress endpoint ────────────────────────────────────

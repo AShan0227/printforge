@@ -37,6 +37,28 @@
             background-size: 200% 100%;
         }
         #three-canvas { width: 100%; height: 100%; display: block; }
+        /* Onboarding overlay */
+        .onboarding-overlay {
+            position: fixed; inset: 0; z-index: 50;
+            background: rgba(0,0,0,0.75); backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .onboarding-card {
+            background: #1e293b; border-radius: 1rem; padding: 2rem;
+            max-width: 28rem; width: 90%; text-align: center;
+        }
+        .onboarding-step { font-size: 3rem; margin-bottom: 0.5rem; }
+        .onboarding-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.25rem; }
+        .onboarding-desc { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .onboarding-dots { display: flex; gap: 0.5rem; justify-content: center; margin-bottom: 1rem; }
+        .onboarding-dot { width: 8px; height: 8px; border-radius: 50%; background: #475569; }
+        .onboarding-dot.active { background: #3b82f6; }
+        /* TOS banner */
+        .tos-banner {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+            background: #1e293b; border-top: 1px solid #334155;
+            padding: 1rem; text-align: center;
+        }
     </style>
     <script type="importmap">
     {
@@ -48,6 +70,41 @@
     </script>
 </head>
 <body class="bg-slate-950 text-white min-h-screen transition-colors duration-300">
+    <!-- Onboarding Overlay -->
+    <div id="onboarding-overlay" class="onboarding-overlay hidden">
+        <div class="onboarding-card">
+            <div id="onboarding-step-icon" class="onboarding-step">📷</div>
+            <div id="onboarding-step-title" class="onboarding-title">Upload any photo of an object</div>
+            <div id="onboarding-step-desc" class="onboarding-desc">Take a photo of anything — a toy, a mug, a sculpture — and drop it here.</div>
+            <div class="onboarding-dots">
+                <div class="onboarding-dot active" id="dot-0"></div>
+                <div class="onboarding-dot" id="dot-1"></div>
+                <div class="onboarding-dot" id="dot-2"></div>
+            </div>
+            <button onclick="nextOnboardingStep()" id="onboarding-next-btn"
+                class="px-6 py-2 bg-blue-600 rounded-lg font-medium hover:bg-blue-500 transition text-sm">
+                Next
+            </button>
+            <div class="mt-3">
+                <label class="flex items-center justify-center gap-2 text-xs text-slate-400 cursor-pointer">
+                    <input type="checkbox" id="onboarding-dismiss" class="rounded" />
+                    <span>Don't show again</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOS Banner -->
+    <div id="tos-banner" class="tos-banner hidden">
+        <p class="text-sm text-slate-300 mb-2">
+            By using PrintForge, you agree to our <a href="#" onclick="showTOS(); return false;" class="text-blue-400 underline">Terms of Service</a>.
+            You own your content. Models are provided as-is. Watertight conversion is best-effort.
+        </p>
+        <button onclick="acceptTOS()" class="px-4 py-1.5 bg-blue-600 rounded-lg text-sm font-medium hover:bg-blue-500 transition">
+            I Accept
+        </button>
+    </div>
+
     <div class="max-w-4xl mx-auto px-4 py-6 sm:py-8">
         <!-- Header -->
         <div class="text-center mb-6 sm:mb-8 flex items-center justify-center gap-4">
@@ -80,6 +137,23 @@
                 </div>
                 <img id="preview" class="hidden max-h-48 sm:max-h-64 mx-auto rounded-lg" />
                 <input type="file" id="file-input" class="hidden" accept="image/*" />
+            </div>
+        </div>
+
+            <!-- Sample Images -->
+            <div class="mt-4">
+                <p class="text-xs text-slate-500 mb-2">Or try a sample:</p>
+                <div class="flex gap-3">
+                    <button onclick="loadSample('cube')" class="flex-1 py-3 bg-slate-800 rounded-lg text-sm hover:bg-slate-700 transition border border-slate-700">
+                        🟦 Cube
+                    </button>
+                    <button onclick="loadSample('sphere')" class="flex-1 py-3 bg-slate-800 rounded-lg text-sm hover:bg-slate-700 transition border border-slate-700">
+                        🔵 Sphere
+                    </button>
+                    <button onclick="loadSample('vase')" class="flex-1 py-3 bg-slate-800 rounded-lg text-sm hover:bg-slate-700 transition border border-slate-700">
+                        🏺 Vase
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -564,6 +638,107 @@
     function sendToBambu() {
         alert('🖨️ 拓竹直连功能开发中...\n\n目前请手动将文件导入 Bambu Studio。');
     }
+
+    // ---- Onboarding ----
+    let onboardingStep = 0;
+    const onboardingSteps = [
+        { icon: '📷', title: 'Upload any photo of an object', desc: 'Take a photo of anything — a toy, a mug, a sculpture — and drop it here.' },
+        { icon: '🤖', title: 'AI generates a 3D model in ~42 seconds', desc: 'Our pipeline removes the background, runs 3D inference, and makes it watertight.' },
+        { icon: '🖨️', title: 'Download 3MF, open in Bambu Studio, print!', desc: 'The output is print-ready. Open it in your slicer and hit print.' },
+    ];
+
+    function showOnboarding() {
+        if (localStorage.getItem('pf-onboarded')) return;
+        document.getElementById('onboarding-overlay').classList.remove('hidden');
+        renderOnboardingStep();
+    }
+
+    function renderOnboardingStep() {
+        const step = onboardingSteps[onboardingStep];
+        document.getElementById('onboarding-step-icon').textContent = step.icon;
+        document.getElementById('onboarding-step-title').textContent = step.title;
+        document.getElementById('onboarding-step-desc').textContent = step.desc;
+        for (let i = 0; i < 3; i++) {
+            document.getElementById('dot-' + i).classList.toggle('active', i === onboardingStep);
+        }
+        document.getElementById('onboarding-next-btn').textContent =
+            onboardingStep === 2 ? 'Get Started' : 'Next';
+    }
+
+    function nextOnboardingStep() {
+        if (onboardingStep < 2) {
+            onboardingStep++;
+            renderOnboardingStep();
+        } else {
+            document.getElementById('onboarding-overlay').classList.add('hidden');
+            if (document.getElementById('onboarding-dismiss').checked) {
+                localStorage.setItem('pf-onboarded', '1');
+            }
+            checkTOS();
+        }
+    }
+
+    // ---- Terms of Service ----
+    function checkTOS() {
+        if (localStorage.getItem('pf-tos-accepted')) return;
+        document.getElementById('tos-banner').classList.remove('hidden');
+    }
+
+    function acceptTOS() {
+        localStorage.setItem('pf-tos-accepted', '1');
+        document.getElementById('tos-banner').classList.add('hidden');
+        fetch(API + '/api/terms/accept');
+    }
+
+    function showTOS() {
+        fetch(API + '/api/terms')
+            .then(r => r.json())
+            .then(data => alert(data.text))
+            .catch(() => alert('Could not load Terms of Service.'));
+    }
+
+    // ---- Sample Images ----
+    function loadSample(name) {
+        // Generate a simple colored sample image client-side
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+
+        const colors = { cube: '#3b82f6', sphere: '#22c55e', vase: '#f59e0b' };
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(0, 0, 512, 512);
+        ctx.fillStyle = colors[name] || '#3b82f6';
+
+        if (name === 'cube') {
+            ctx.fillRect(156, 156, 200, 200);
+        } else if (name === 'sphere') {
+            ctx.beginPath();
+            ctx.arc(256, 256, 120, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(180, 400);
+            ctx.quadraticCurveTo(150, 200, 220, 150);
+            ctx.lineTo(292, 150);
+            ctx.quadraticCurveTo(362, 200, 332, 400);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        canvas.toBlob(blob => {
+            const file = new File([blob], `sample_${name}.png`, { type: 'image/png' });
+            handleFile(file);
+        });
+    }
+
+    // ---- Init ----
+    (function initOnboarding() {
+        showOnboarding();
+        if (localStorage.getItem('pf-onboarded')) {
+            checkTOS();
+        }
+    })();
     </script>
 </body>
 </html>

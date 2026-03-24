@@ -331,6 +331,110 @@ def cmd_repair(args):
         print(f"  - {r}")
 
 
+def cmd_benchmark(args):
+    """Run performance benchmarks."""
+    _setup_logging(args.verbose)
+    from .benchmark import BenchmarkSuite
+
+    image_path = Path(args.image)
+    if not image_path.exists():
+        print(f"Error: Image not found: {image_path}", file=sys.stderr)
+        sys.exit(1)
+
+    suite = BenchmarkSuite()
+
+    print("PrintForge — Performance Benchmark")
+    print(f"  Image: {image_path}")
+    print()
+
+    # Inference benchmark
+    print("Inference benchmarks:")
+    results = suite.benchmark_inference(str(image_path), backends=args.backends)
+    for r in results:
+        if r.error:
+            print(f"  {r.backend}: FAILED ({r.error})")
+        else:
+            print(f"  {r.backend}: {r.duration_ms:.0f}ms, {r.vertices} verts, quality={r.quality_score}")
+    print()
+
+    # Full pipeline benchmark
+    print("Full pipeline benchmark:")
+    report = suite.benchmark_pipeline(str(image_path))
+    for stage in report.pipeline_stages:
+        print(f"  {stage.stage}: {stage.duration_ms:.1f}ms")
+    print(f"  TOTAL: {report.total_pipeline_ms:.0f}ms")
+    print()
+    print(f"Report saved to: {suite.BENCHMARK_REPORT_PATH}")
+
+
+def cmd_download_model(args):
+    """Download model weights for local inference."""
+    _setup_logging(args.verbose)
+
+    model_name = args.model
+    models_dir = Path.home() / ".printforge" / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    model_configs = {
+        "triposr": {
+            "url": "https://huggingface.co/stabilityai/TripoSR/resolve/main/model.ckpt",
+            "filename": "triposr_model.ckpt",
+            "name": "TripoSR",
+        },
+        "hunyuan3d": {
+            "url": "https://huggingface.co/Tencent/Hunyuan3D-2/resolve/main/model.safetensors",
+            "filename": "hunyuan3d_model.safetensors",
+            "name": "Hunyuan3D-2",
+        },
+    }
+
+    cfg = model_configs[model_name]
+    dest = models_dir / cfg["filename"]
+
+    if dest.exists():
+        print(f"{cfg['name']} already downloaded at {dest}")
+        print(f"  Size: {dest.stat().st_size / 1024 / 1024:.1f} MB")
+        return
+
+    print(f"Downloading {cfg['name']} to {dest}...")
+    print(f"  URL: {cfg['url']}")
+
+    try:
+        import requests
+
+        resp = requests.get(cfg["url"], stream=True, timeout=30)
+        resp.raise_for_status()
+
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        chunk_size = 8192
+
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=chunk_size):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = downloaded / total * 100
+                    bar_len = 40
+                    filled = int(bar_len * downloaded / total)
+                    bar = "█" * filled + "░" * (bar_len - filled)
+                    print(f"\r  [{bar}] {pct:.1f}% ({downloaded / 1024 / 1024:.1f} MB)", end="", flush=True)
+
+        print()
+        print(f"Download complete: {dest}")
+        print(f"  Size: {dest.stat().st_size / 1024 / 1024:.1f} MB")
+    except requests.exceptions.ConnectionError:
+        print(f"Error: Cannot connect to download server. Check your internet connection.", file=sys.stderr)
+        if dest.exists():
+            dest.unlink()
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error downloading model: {e}", file=sys.stderr)
+        if dest.exists():
+            dest.unlink()
+        sys.exit(1)
+
+
 def _print_result(result):
     """Print pipeline result summary."""
     print(f"{'='*50}")
@@ -420,6 +524,21 @@ def main():
     p_repair.add_argument("--resolution", type=int, default=128, help="Voxel remesh resolution")
     p_repair.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_repair.set_defaults(func=cmd_repair)
+
+    # ── printforge benchmark <image> ─────────────────────────────────
+    p_bench = subparsers.add_parser("benchmark", help="Run performance benchmarks")
+    p_bench.add_argument("image", help="Test image for benchmarking")
+    p_bench.add_argument("--backends", nargs="*", default=["placeholder", "hunyuan3d"],
+                         help="Inference backends to benchmark")
+    p_bench.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_bench.set_defaults(func=cmd_benchmark)
+
+    # ── printforge download-model ────────────────────────────────────
+    p_dl = subparsers.add_parser("download-model", help="Download model weights for local inference")
+    p_dl.add_argument("--model", choices=["hunyuan3d", "triposr"], default="triposr",
+                      help="Model to download (default: triposr)")
+    p_dl.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_dl.set_defaults(func=cmd_download_model)
 
     # ── Legacy: printforge <image> (backward compat) ────────────────
     args = parser.parse_args()
