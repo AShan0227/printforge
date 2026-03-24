@@ -5,47 +5,88 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PrintForge — 一张照片，一键 3D 打印</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {}
+            }
+        }
+    </script>
     <style>
         .drop-zone { transition: all 0.2s; }
         .drop-zone.dragover { border-color: #3b82f6; background: rgba(59,130,246,0.1); }
         .spinner { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        model-viewer { width: 100%; height: 400px; }
+        @keyframes pulse-skeleton {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 0.8; }
+        }
+        .skeleton-pulse {
+            animation: pulse-skeleton 1.5s ease-in-out infinite;
+            background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+            background-size: 200% 100%;
+            animation: pulse-skeleton 1.5s ease-in-out infinite, shimmer 2s linear infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .light .skeleton-pulse {
+            background: linear-gradient(90deg, #e2e8f0 25%, #cbd5e1 50%, #e2e8f0 75%);
+            background-size: 200% 100%;
+        }
+        #three-canvas { width: 100%; height: 100%; display: block; }
     </style>
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 </head>
-<body class="bg-slate-950 text-white min-h-screen">
-    <div class="max-w-4xl mx-auto px-4 py-8">
+<body class="bg-slate-950 text-white min-h-screen transition-colors duration-300">
+    <div class="max-w-4xl mx-auto px-4 py-6 sm:py-8">
         <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-                🏭 PrintForge
-            </h1>
-            <p class="text-slate-400 mt-2">一张照片，一键 3D 打印</p>
+        <div class="text-center mb-6 sm:mb-8 flex items-center justify-center gap-4">
+            <div class="flex-1"></div>
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                    🏭 PrintForge
+                </h1>
+                <p class="text-slate-400 dark:text-slate-400 mt-2 text-sm sm:text-base">一张照片，一键 3D 打印</p>
+            </div>
+            <div class="flex-1 flex justify-end">
+                <button id="theme-toggle" onclick="toggleTheme()"
+                    class="p-2 rounded-lg bg-slate-800 dark:bg-slate-800 hover:bg-slate-700 dark:hover:bg-slate-700 transition text-lg"
+                    title="切换主题">🌙</button>
+            </div>
         </div>
 
         <!-- Mode Selector -->
-        <div class="flex gap-2 mb-6 justify-center">
-            <button onclick="setMode('image')" id="btn-image" class="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium">📷 图片转3D</button>
-            <button onclick="setMode('text')" id="btn-text" class="px-4 py-2 rounded-lg bg-slate-700 text-sm font-medium">✍️ 文字转3D</button>
+        <div class="flex gap-2 mb-4 sm:mb-6 justify-center">
+            <button onclick="setMode('image')" id="btn-image" class="px-3 sm:px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium">📷 图片转3D</button>
+            <button onclick="setMode('text')" id="btn-text" class="px-3 sm:px-4 py-2 rounded-lg bg-slate-700 text-sm font-medium">✍️ 文字转3D</button>
         </div>
 
         <!-- Image Upload -->
         <div id="mode-image">
-            <div id="drop-zone" class="drop-zone border-2 border-dashed border-slate-600 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 transition-colors">
+            <div id="drop-zone" class="drop-zone border-2 border-dashed border-slate-600 rounded-xl p-8 sm:p-12 text-center cursor-pointer hover:border-blue-400 transition-colors">
                 <div id="upload-prompt">
-                    <p class="text-lg text-slate-300">📷 拖拽图片到这里，或点击上传</p>
-                    <p class="text-sm text-slate-500 mt-2">支持 JPG / PNG，建议物体居中、背景简洁</p>
+                    <p class="text-base sm:text-lg text-slate-300">📷 拖拽图片到这里，或点击上传</p>
+                    <p class="text-xs sm:text-sm text-slate-500 mt-2">支持 JPG / PNG，建议物体居中、背景简洁</p>
                 </div>
-                <img id="preview" class="hidden max-h-64 mx-auto rounded-lg" />
+                <img id="preview" class="hidden max-h-48 sm:max-h-64 mx-auto rounded-lg" />
                 <input type="file" id="file-input" class="hidden" accept="image/*" />
             </div>
         </div>
 
         <!-- Text Input -->
         <div id="mode-text" class="hidden">
-            <textarea id="text-input" rows="3" 
-                class="w-full bg-slate-800 border border-slate-600 rounded-xl p-4 text-white placeholder-slate-500"
+            <textarea id="text-input" rows="3"
+                class="w-full bg-slate-800 border border-slate-600 rounded-xl p-4 text-white placeholder-slate-500 text-sm sm:text-base"
                 placeholder="描述你想打印的物体，例如：一个猫形花瓶，高 10cm，底部要平稳"></textarea>
         </div>
 
@@ -79,8 +120,8 @@
         </div>
 
         <!-- Generate Button -->
-        <button id="generate-btn" onclick="generate()" 
-            class="w-full mt-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-xl font-semibold text-lg hover:opacity-90 transition disabled:opacity-50"
+        <button id="generate-btn" onclick="generate()"
+            class="w-full mt-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-xl font-semibold text-base sm:text-lg hover:opacity-90 transition disabled:opacity-50"
             disabled>
             🚀 生成 3D 模型
         </button>
@@ -89,27 +130,55 @@
         <div id="progress" class="hidden mt-6">
             <div class="flex items-center gap-3">
                 <div class="spinner w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
-                <span id="progress-text" class="text-slate-300">处理中...</span>
+                <span id="progress-text" class="text-slate-300 text-sm sm:text-base">处理中...</span>
             </div>
             <div class="mt-2 h-2 bg-slate-800 rounded-full overflow-hidden">
                 <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-500" style="width: 0%"></div>
             </div>
         </div>
 
+        <!-- Loading Skeleton -->
+        <div id="loading-skeleton" class="hidden mt-6">
+            <div class="bg-slate-800 rounded-xl p-4 sm:p-6">
+                <div class="skeleton-pulse h-6 w-40 rounded mb-4"></div>
+                <div class="skeleton-pulse rounded-lg mb-4" style="height: 300px;"></div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div class="skeleton-pulse rounded-lg h-16"></div>
+                    <div class="skeleton-pulse rounded-lg h-16"></div>
+                    <div class="skeleton-pulse rounded-lg h-16"></div>
+                    <div class="skeleton-pulse rounded-lg h-16"></div>
+                </div>
+                <div class="flex gap-3">
+                    <div class="skeleton-pulse flex-1 rounded-lg h-10"></div>
+                    <div class="skeleton-pulse flex-1 rounded-lg h-10"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Result -->
         <div id="result" class="hidden mt-6">
-            <div class="bg-slate-800 rounded-xl p-6">
+            <div class="bg-slate-800 rounded-xl p-4 sm:p-6">
                 <h3 class="text-lg font-semibold mb-4">✅ 生成完成</h3>
-                
-                <!-- 3D Preview -->
-                <div id="preview-3d" class="bg-slate-900 rounded-lg mb-4">
-                    <model-viewer id="model-viewer" 
-                        camera-controls touch-action="pan-y"
-                        auto-rotate shadow-intensity="1"
-                        style="width:100%;height:400px;background:#0f172a;">
-                    </model-viewer>
+
+                <!-- 3D Preview (three.js) -->
+                <div id="preview-3d" class="bg-slate-900 rounded-lg mb-4 relative overflow-hidden" style="height: 350px;">
+                    <canvas id="three-canvas"></canvas>
+                    <!-- Viewer controls overlay -->
+                    <div class="absolute top-2 right-2 flex gap-2 z-10">
+                        <button id="wireframe-toggle" onclick="toggleWireframe()"
+                            class="px-3 py-1.5 bg-slate-800/80 backdrop-blur rounded-lg text-xs font-medium hover:bg-slate-700/80 transition border border-slate-600/50"
+                            title="线框模式">🔲 线框</button>
+                    </div>
+                    <!-- Section plane slider -->
+                    <div class="absolute bottom-2 left-2 right-2 z-10 flex items-center gap-2 bg-slate-800/80 backdrop-blur rounded-lg px-3 py-2 border border-slate-600/50">
+                        <span class="text-xs text-slate-300 whitespace-nowrap">✂️ 切面</span>
+                        <input id="clip-slider" type="range" min="0" max="100" value="100"
+                            class="flex-1 h-1.5 accent-blue-500 cursor-pointer"
+                            oninput="updateClipPlane(this.value)" />
+                        <span id="clip-label" class="text-xs text-slate-400 w-8 text-right">100</span>
+                    </div>
                 </div>
-                
+
                 <!-- Stats -->
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     <div class="bg-slate-900 rounded-lg p-3">
@@ -132,10 +201,10 @@
 
                 <!-- Actions -->
                 <div class="flex gap-3">
-                    <a id="download-btn" class="flex-1 py-2 bg-blue-600 rounded-lg text-center font-medium hover:bg-blue-500">
+                    <a id="download-btn" class="flex-1 py-2 bg-blue-600 rounded-lg text-center font-medium hover:bg-blue-500 text-sm sm:text-base cursor-pointer">
                         📥 下载文件
                     </a>
-                    <button onclick="sendToBambu()" class="flex-1 py-2 bg-green-600 rounded-lg font-medium hover:bg-green-500">
+                    <button onclick="sendToBambu()" class="flex-1 py-2 bg-green-600 rounded-lg font-medium hover:bg-green-500 text-sm sm:text-base">
                         🖨️ 发送到拓竹
                     </button>
                 </div>
@@ -143,27 +212,251 @@
         </div>
     </div>
 
+    <!-- Three.js scene -->
+    <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ---- Three.js setup ----
+    let scene, camera, renderer, controls, currentModel, clipPlane, wireframeOn = false;
+    let modelBoundingBox = null;
+
+    function initThree() {
+        const canvas = document.getElementById('three-canvas');
+        const container = document.getElementById('preview-3d');
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f172a);
+
+        // Clipping plane (Y-axis, clips from top)
+        clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1000);
+
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.localClippingEnabled = true;
+        renderer.shadowMap.enabled = true;
+        resizeRenderer();
+
+        camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 1000);
+        camera.position.set(2, 1.5, 2);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.target.set(0, 0, 0);
+
+        // Lights
+        const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambient);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        fillLight.position.set(-5, 3, -5);
+        scene.add(fillLight);
+
+        // Grid helper
+        const grid = new THREE.GridHelper(4, 20, 0x334155, 0x1e293b);
+        scene.add(grid);
+
+        animate();
+        window.addEventListener('resize', resizeRenderer);
+    }
+
+    function resizeRenderer() {
+        const container = document.getElementById('preview-3d');
+        if (!renderer || !container) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        renderer.setSize(w, h);
+        if (camera) {
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+        }
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (controls) controls.update();
+        if (renderer && scene && camera) renderer.render(scene, camera);
+    }
+
+    function clearModel() {
+        if (currentModel) {
+            scene.remove(currentModel);
+            currentModel.traverse(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                    else child.material.dispose();
+                }
+            });
+            currentModel = null;
+        }
+        modelBoundingBox = null;
+    }
+
+    function fitCameraToModel(object) {
+        const box = new THREE.Box3().setFromObject(object);
+        modelBoundingBox = box;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = camera.fov * (Math.PI / 180);
+        let cameraZ = maxDim / (2 * Math.tan(fov / 2));
+        cameraZ *= 1.8;
+
+        camera.position.set(center.x + cameraZ * 0.6, center.y + cameraZ * 0.4, center.z + cameraZ * 0.6);
+        controls.target.copy(center);
+        camera.near = maxDim / 100;
+        camera.far = maxDim * 100;
+        camera.updateProjectionMatrix();
+        controls.update();
+
+        // Reset clip plane to encompass full model
+        clipPlane.constant = box.max.y + maxDim * 0.1;
+        document.getElementById('clip-slider').value = 100;
+        document.getElementById('clip-label').textContent = '100';
+    }
+
+    function applyMaterialSettings(object) {
+        object.traverse(child => {
+            if (child.isMesh) {
+                if (!child.material.color || child.material.color.getHex() === 0x000000) {
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0x4a9eff,
+                        metalness: 0.2,
+                        roughness: 0.6,
+                    });
+                }
+                child.material.clippingPlanes = [clipPlane];
+                child.material.clipShadows = true;
+                child.material.wireframe = wireframeOn;
+                child.material.side = THREE.DoubleSide;
+                child.castShadow = true;
+                child.receiveShadow = true;
+            }
+        });
+    }
+
+    // Load model from URL
+    window.loadModel = function(url, format) {
+        if (!scene) initThree();
+        clearModel();
+
+        if (format === 'stl') {
+            const loader = new STLLoader();
+            loader.load(url, geometry => {
+                geometry.computeVertexNormals();
+                const material = new THREE.MeshStandardMaterial({
+                    color: 0x4a9eff, metalness: 0.2, roughness: 0.6,
+                    clippingPlanes: [clipPlane], clipShadows: true, side: THREE.DoubleSide,
+                });
+                material.wireframe = wireframeOn;
+                const mesh = new THREE.Mesh(geometry, material);
+                currentModel = mesh;
+                scene.add(mesh);
+                fitCameraToModel(mesh);
+            });
+        } else {
+            // GLB / GLTF
+            const loader = new GLTFLoader();
+            loader.load(url, gltf => {
+                const model = gltf.scene;
+                applyMaterialSettings(model);
+                currentModel = model;
+                scene.add(model);
+                fitCameraToModel(model);
+            });
+        }
+    };
+
+    // Toggle wireframe
+    window.toggleWireframe = function() {
+        wireframeOn = !wireframeOn;
+        const btn = document.getElementById('wireframe-toggle');
+        btn.classList.toggle('bg-blue-600/80', wireframeOn);
+        btn.classList.toggle('bg-slate-800/80', !wireframeOn);
+        if (currentModel) {
+            currentModel.traverse(child => {
+                if (child.isMesh) {
+                    child.material.wireframe = wireframeOn;
+                }
+            });
+        }
+    };
+
+    // Update clipping plane
+    window.updateClipPlane = function(value) {
+        document.getElementById('clip-label').textContent = value;
+        if (!modelBoundingBox) return;
+        const minY = modelBoundingBox.min.y;
+        const maxY = modelBoundingBox.max.y;
+        const range = maxY - minY;
+        const margin = range * 0.1;
+        // value 0 = clip everything, 100 = show everything
+        clipPlane.constant = minY + (range + margin) * (value / 100);
+    };
+
+    // Update scene background for theme
+    window.updateSceneBg = function(isDark) {
+        if (scene) {
+            scene.background = new THREE.Color(isDark ? 0x0f172a : 0xf1f5f9);
+        }
+    };
+
+    // Initialize three.js eagerly
+    initThree();
+    </script>
+
+    <!-- App logic -->
     <script>
     const API = window.location.origin;
     let currentMode = 'image';
     let selectedFile = null;
 
+    // ---- Theme ----
+    function toggleTheme() {
+        const html = document.documentElement;
+        const isDark = html.classList.contains('dark');
+        html.classList.toggle('dark', !isDark);
+        document.body.classList.toggle('bg-slate-950', !isDark);
+        document.body.classList.toggle('text-white', !isDark);
+        document.body.classList.toggle('bg-slate-100', isDark);
+        document.body.classList.toggle('text-slate-900', isDark);
+        document.getElementById('theme-toggle').textContent = isDark ? '☀️' : '🌙';
+        localStorage.setItem('pf-theme', isDark ? 'light' : 'dark');
+        if (window.updateSceneBg) window.updateSceneBg(!isDark);
+    }
+
+    // Restore saved theme
+    (function() {
+        const saved = localStorage.getItem('pf-theme');
+        if (saved === 'light') {
+            toggleTheme();
+        }
+    })();
+
+    // ---- Mode switching ----
     function setMode(mode) {
         currentMode = mode;
         document.getElementById('mode-image').classList.toggle('hidden', mode !== 'image');
         document.getElementById('mode-text').classList.toggle('hidden', mode !== 'text');
-        document.getElementById('btn-image').className = `px-4 py-2 rounded-lg text-sm font-medium ${mode === 'image' ? 'bg-blue-600' : 'bg-slate-700'}`;
-        document.getElementById('btn-text').className = `px-4 py-2 rounded-lg text-sm font-medium ${mode === 'text' ? 'bg-blue-600' : 'bg-slate-700'}`;
+        document.getElementById('btn-image').className = `px-3 sm:px-4 py-2 rounded-lg text-sm font-medium ${mode === 'image' ? 'bg-blue-600' : 'bg-slate-700'}`;
+        document.getElementById('btn-text').className = `px-3 sm:px-4 py-2 rounded-lg text-sm font-medium ${mode === 'text' ? 'bg-blue-600' : 'bg-slate-700'}`;
         updateGenerateButton();
     }
 
-    // File upload
+    // ---- File upload ----
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
-    
+
     dropZone.onclick = () => fileInput.click();
     fileInput.onchange = (e) => handleFile(e.target.files[0]);
-    
+
     dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
     dropZone.ondragleave = () => dropZone.classList.remove('dragover');
     dropZone.ondrop = (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); };
@@ -193,12 +486,15 @@
 
     document.getElementById('text-input').oninput = updateGenerateButton;
 
+    // ---- Generate ----
     async function generate() {
         const progress = document.getElementById('progress');
         const result = document.getElementById('result');
+        const skeleton = document.getElementById('loading-skeleton');
         const btn = document.getElementById('generate-btn');
-        
+
         progress.classList.remove('hidden');
+        skeleton.classList.remove('hidden');
         result.classList.add('hidden');
         btn.disabled = true;
 
@@ -234,7 +530,7 @@
 
             const blob = await resp.blob();
             const url = URL.createObjectURL(blob);
-            
+
             // Update stats
             document.getElementById('stat-vertices').textContent = resp.headers.get('X-PrintForge-Vertices') || '?';
             document.getElementById('stat-faces').textContent = resp.headers.get('X-PrintForge-Faces') || '?';
@@ -246,13 +542,18 @@
             document.getElementById('download-btn').href = url;
             document.getElementById('download-btn').download = `printforge_output.${ext}`;
 
-            // 3D preview (if GLB)
+            // 3D preview with three.js
             try {
-                document.getElementById('model-viewer').src = url;
-            } catch(e) {}
+                const fmt = ext === 'stl' ? 'stl' : 'glb';
+                window.loadModel(url, fmt);
+            } catch(e) {
+                console.warn('3D preview failed:', e);
+            }
 
+            skeleton.classList.add('hidden');
             result.classList.remove('hidden');
         } catch (e) {
+            skeleton.classList.add('hidden');
             alert('生成失败: ' + e.message);
         } finally {
             progress.classList.add('hidden');

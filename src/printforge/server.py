@@ -5,22 +5,164 @@ import json
 import tempfile
 import logging
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .pipeline import PrintForgePipeline, PipelineConfig
 from .print_optimizer import PrintOptimizer, PRINTER_PRESETS
 from .formats import SUPPORTED_FORMATS
+from .cache import ImageCache
 
 logger = logging.getLogger(__name__)
 
+
+# ── Pydantic Response Models ──────────────────────────────────────
+
+class HealthResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "ok"})
+    version: str = Field(..., json_schema_extra={"example": "1.1.0"})
+
+
+class AnalyzeResponse(BaseModel):
+    status: str
+    message: str
+    supported_formats: List[str]
+    default_size_mm: float
+
+
+class TextTo3DFallbackResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "fallback"})
+    prompt: str
+    message: str
+
+
+class OrientationInfo(BaseModel):
+    height_mm: float
+    support_estimate_mm3: float
+    base_area_mm2: float
+    score: float
+    overhang_percentage: float
+    support_contact_area_mm2: float
+
+
+class MaterialEstimate(BaseModel):
+    print_time_minutes: int
+    filament_grams: float
+    filament_meters: float
+    layer_count: int
+
+
+class PrintIssue(BaseModel):
+    severity: str
+    category: str
+    message: str
+
+
+class MeshInfo(BaseModel):
+    vertices: int
+    faces: int
+    is_watertight: bool
+    bounding_box_mm: List[float]
+
+
+class OptimizeResponse(BaseModel):
+    status: str
+    printer: str
+    orientation: OrientationInfo
+    estimate: MaterialEstimate
+    issues: List[PrintIssue]
+    mesh_info: MeshInfo
+
+
+class CostBreakdown(BaseModel):
+    filament_grams: float
+    filament_meters: float
+    filament_cost_usd: float
+    print_time_hours: float
+    electricity_cost_usd: float
+    total_cost_usd: float
+
+
+class CostResponse(BaseModel):
+    status: str
+    material: str
+    infill_percent: float
+    layer_height_mm: float
+    cost: CostBreakdown
+    mesh_info: MeshInfo
+
+
+class SplitPartInfo(BaseModel):
+    index: int
+    has_pins: bool
+    has_holes: bool
+    bounding_box: Any
+    file: str
+
+
+class SplitResponse(BaseModel):
+    status: str
+    num_parts: int
+    fits_in_volume: bool
+    split_axes: Any
+    parts: List[SplitPartInfo]
+
+
+class FormatsResponse(BaseModel):
+    formats: Dict[str, Any]
+    printers: Dict[str, str]
+
+
+class PrinterListResponse(BaseModel):
+    printers: List[Any]
+
+
+class PrinterSendResponse(BaseModel):
+    status: str
+    message: str
+
+
+class CacheStatsResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "ok"})
+    hits: int = Field(..., description="Number of cache hits since startup")
+    misses: int = Field(..., description="Number of cache misses since startup")
+    size_bytes: int = Field(..., description="Total size of cached files in bytes")
+    num_entries: int = Field(..., description="Number of cached mesh entries")
+
+
+# ── OpenAPI tag metadata ──────────────────────────────────────────
+
+tags_metadata = [
+    {
+        "name": "Generation",
+        "description": "Endpoints for generating 3D models from images or text descriptions.",
+    },
+    {
+        "name": "Optimization",
+        "description": "Endpoints for analyzing, optimizing, costing, and splitting 3D meshes for printing.",
+    },
+    {
+        "name": "Printers",
+        "description": "Endpoints for discovering and sending jobs to Bambu Lab printers.",
+    },
+    {
+        "name": "System",
+        "description": "Health checks, supported formats, and cache management.",
+    },
+]
+
+
 app = FastAPI(
     title="PrintForge",
-    description="One photo to 3D print — commercial API",
-    version="0.2.0",
+    description="One photo to 3D print — commercial API. Upload an image and receive a watertight, "
+                "print-ready 3D model in 3MF/STL/OBJ format.",
+    version="1.1.0",
+    openapi_tags=tags_metadata,
 )
 
 app.add_middleware(
@@ -31,7 +173,8 @@ app.add_middleware(
 )
 
 # Global pipeline instance (loaded once)
-_pipeline: PrintForgePipeline | None = None
+_pipeline: Optional[PrintForgePipeline] = None
+_cache: Optional[ImageCache] = None
 
 
 def get_pipeline() -> PrintForgePipeline:
@@ -41,14 +184,36 @@ def get_pipeline() -> PrintForgePipeline:
     return _pipeline
 
 
-# ── Existing endpoints ──────────────────────────────────────────────
+def get_cache() -> ImageCache:
+    global _cache
+    if _cache is None:
+        _cache = ImageCache()
+    return _cache
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "version": "0.2.0"}
 
+# ── Generation endpoints ──────────────────────────────────────────
 
-@app.post("/api/generate")
+@app.post(
+    "/api/generate",
+    tags=["Generation"],
+    summary="Generate a 3D printable file from an image",
+    description="Upload a photo (JPEG/PNG) and receive a watertight 3D mesh file "
+                "suitable for FDM/SLA printing. Supports 3MF, STL, and OBJ output.",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "description": "The generated 3D mesh file",
+            "headers": {
+                "X-PrintForge-Vertices": {"description": "Number of vertices", "schema": {"type": "integer"}},
+                "X-PrintForge-Faces": {"description": "Number of faces", "schema": {"type": "integer"}},
+                "X-PrintForge-Watertight": {"description": "Whether mesh is watertight", "schema": {"type": "string"}},
+                "X-PrintForge-Duration-Ms": {"description": "Pipeline duration in ms", "schema": {"type": "integer"}},
+            },
+        },
+        400: {"description": "Invalid input (not an image)"},
+        500: {"description": "Pipeline failure"},
+    },
+)
 async def generate(
     image: UploadFile = File(...),
     format: str = "3mf",
@@ -93,28 +258,35 @@ async def generate(
         raise HTTPException(500, f"Generation failed: {str(e)}")
 
 
-@app.post("/api/analyze")
-async def analyze(image: UploadFile = File(...)):
-    """Analyze an image and return metadata without generating the full mesh."""
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image")
-
-    return JSONResponse({
-        "status": "ok",
-        "message": "Analysis endpoint — coming soon",
-        "supported_formats": ["3mf", "stl", "obj"],
-        "default_size_mm": 50.0,
-    })
-
-
-# ── New endpoints ───────────────────────────────────────────────────
-
-@app.post("/api/text-to-3d")
+@app.post(
+    "/api/text-to-3d",
+    tags=["Generation"],
+    summary="Generate a 3D model from a text description",
+    description="Provide a text description of the desired object and optionally an image. "
+                "Returns a 3D mesh file, or a fallback prompt if image generation is unavailable.",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "description": "The generated 3D mesh file, or a JSON fallback response",
+            "content": {
+                "application/octet-stream": {},
+                "application/json": {
+                    "example": {
+                        "status": "fallback",
+                        "prompt": "A small dragon figurine...",
+                        "message": "Image generation unavailable. Use the prompt to generate an image manually.",
+                    }
+                },
+            },
+        },
+        500: {"description": "Text-to-3D pipeline failure"},
+    },
+)
 async def text_to_3d(
     description: str = Form(...),
     format: str = Form("3mf"),
     size_mm: float = Form(50.0),
-    image: UploadFile | None = File(None),
+    image: Optional[UploadFile] = File(None),
 ):
     """Generate a 3D model from a text description.
 
@@ -167,7 +339,42 @@ async def text_to_3d(
         raise HTTPException(500, f"Text-to-3D failed: {str(e)}")
 
 
-@app.post("/api/optimize")
+@app.post(
+    "/api/analyze",
+    tags=["Generation"],
+    summary="Analyze an image without generating a mesh",
+    description="Upload an image and receive metadata and analysis without running full 3D inference.",
+    response_model=AnalyzeResponse,
+    responses={
+        400: {"description": "Invalid input (not an image)"},
+    },
+)
+async def analyze(image: UploadFile = File(...)):
+    """Analyze an image and return metadata without generating the full mesh."""
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(400, "File must be an image")
+
+    return JSONResponse({
+        "status": "ok",
+        "message": "Analysis endpoint — coming soon",
+        "supported_formats": ["3mf", "stl", "obj"],
+        "default_size_mm": 50.0,
+    })
+
+
+# ── Optimization endpoints ────────────────────────────────────────
+
+@app.post(
+    "/api/optimize",
+    tags=["Optimization"],
+    summary="Optimize a mesh for 3D printing",
+    description="Upload a mesh file and get orientation analysis, material estimates, "
+                "and printability issue detection for a specific printer.",
+    response_model=OptimizeResponse,
+    responses={
+        500: {"description": "Optimization failure"},
+    },
+)
 async def optimize(
     mesh_file: UploadFile = File(...),
     printer: str = Form("bambu-a1"),
@@ -231,7 +438,17 @@ async def optimize(
         raise HTTPException(500, f"Optimization failed: {str(e)}")
 
 
-@app.post("/api/cost")
+@app.post(
+    "/api/cost",
+    tags=["Optimization"],
+    summary="Estimate printing cost for a mesh",
+    description="Upload a mesh and get a detailed cost breakdown including filament usage, "
+                "print time, and electricity cost.",
+    response_model=CostResponse,
+    responses={
+        500: {"description": "Cost estimation failure"},
+    },
+)
 async def cost_estimate(
     mesh_file: UploadFile = File(...),
     material: str = Form("PLA"),
@@ -278,7 +495,17 @@ async def cost_estimate(
         raise HTTPException(500, f"Cost estimation failed: {str(e)}")
 
 
-@app.post("/api/split")
+@app.post(
+    "/api/split",
+    tags=["Optimization"],
+    summary="Split a mesh into printer-sized parts",
+    description="Upload a mesh that exceeds your build volume and split it into interlocking parts "
+                "with alignment pins and holes.",
+    response_model=SplitResponse,
+    responses={
+        500: {"description": "Split operation failure"},
+    },
+)
 async def split(
     mesh_file: UploadFile = File(...),
     volume: str = Form("256x256x256"),
@@ -331,18 +558,15 @@ async def split(
         raise HTTPException(500, f"Split failed: {str(e)}")
 
 
-@app.get("/api/formats")
-async def list_formats():
-    """List supported export formats."""
-    return JSONResponse({
-        "formats": SUPPORTED_FORMATS,
-        "printers": {k: v["name"] for k, v in PRINTER_PRESETS.items()},
-    })
+# ── Printer endpoints ─────────────────────────────────────────────
 
-
-# ── Printer discovery & send ───────────────────────────────────────
-
-@app.get("/api/printers")
+@app.get(
+    "/api/printers",
+    tags=["Printers"],
+    summary="Discover printers on the local network",
+    description="Scan the local network for Bambu Lab printers via SSDP discovery.",
+    response_model=PrinterListResponse,
+)
 async def discover_printers():
     """Discover Bambu Lab printers on the local network via SSDP."""
     from .bambu import BambuConnection, BambuPrinter
@@ -352,7 +576,17 @@ async def discover_printers():
     return JSONResponse({"printers": found})
 
 
-@app.post("/api/printers/send")
+@app.post(
+    "/api/printers/send",
+    tags=["Printers"],
+    summary="Send a print job to a Bambu printer",
+    description="Upload a 3MF or gcode file and send it directly to a Bambu Lab printer by IP address.",
+    response_model=PrinterSendResponse,
+    responses={
+        502: {"description": "Printer unreachable"},
+        500: {"description": "Failed to send print job"},
+    },
+)
 async def send_to_printer(
     file: UploadFile = File(...),
     printer_ip: str = Form(...),
@@ -380,6 +614,54 @@ async def send_to_printer(
         raise HTTPException(500, "Failed to send print job")
 
     return JSONResponse({"status": "ok", "message": f"Print job sent to {printer_ip}"})
+
+
+# ── System endpoints ──────────────────────────────────────────────
+
+@app.get(
+    "/health",
+    tags=["System"],
+    summary="Health check",
+    description="Returns service status and version. Use for liveness probes.",
+    response_model=HealthResponse,
+)
+async def health():
+    return {"status": "ok", "version": "1.1.0"}
+
+
+@app.get(
+    "/api/formats",
+    tags=["System"],
+    summary="List supported export formats and printers",
+    description="Returns all supported 3D file formats and known printer presets.",
+    response_model=FormatsResponse,
+)
+async def list_formats():
+    """List supported export formats."""
+    return JSONResponse({
+        "formats": SUPPORTED_FORMATS,
+        "printers": {k: v["name"] for k, v in PRINTER_PRESETS.items()},
+    })
+
+
+@app.get(
+    "/api/cache/stats",
+    tags=["System"],
+    summary="Get image cache statistics",
+    description="Returns cache hit/miss counts, total size, and number of cached entries.",
+    response_model=CacheStatsResponse,
+)
+async def cache_stats():
+    """Return current cache statistics."""
+    cache = get_cache()
+    s = cache.stats()
+    return JSONResponse({
+        "status": "ok",
+        "hits": s.hits,
+        "misses": s.misses,
+        "size_bytes": s.size_bytes,
+        "num_entries": s.num_entries,
+    })
 
 
 # ── WebSocket progress endpoint ────────────────────────────────────

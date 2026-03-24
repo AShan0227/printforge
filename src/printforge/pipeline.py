@@ -6,6 +6,7 @@ Image → TripoSR Inference → SDF Conversion → Marching Cubes → Watertight
 Each stage is a standalone function, composable into the full pipeline.
 """
 
+import hashlib
 import io
 import os
 import time
@@ -16,6 +17,8 @@ from typing import Optional
 
 import numpy as np
 import requests
+
+from .cache import ImageCache
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +68,10 @@ class PipelineResult:
 class PrintForgePipeline:
     """Main pipeline: Image → 3D printable mesh."""
     
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    def __init__(self, config: Optional[PipelineConfig] = None, cache: Optional[ImageCache] = None):
         self.config = config or PipelineConfig()
         self._model = None
+        self._cache = cache or ImageCache()
     
     def run(self, image_path: str, output_path: str, progress_callback=None) -> PipelineResult:
         """Execute the full pipeline.
@@ -83,6 +87,35 @@ class PrintForgePipeline:
         start = time.time()
         stages = {}
         warnings = []
+
+        # Cache check: compute SHA256 of input image and look up cached result
+        image_bytes = Path(image_path).read_bytes()
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        cached_path = self._cache.get(image_bytes)
+
+        if cached_path and Path(cached_path).exists():
+            import trimesh
+            import shutil
+
+            logger.info("Cache hit for image %s — loading cached mesh", image_hash[:12])
+            _progress("cache_hit", 0.0)
+            cached_mesh = trimesh.load(cached_path, force="mesh")
+
+            # Copy cached file to output_path
+            shutil.copy2(cached_path, output_path)
+
+            total_ms = (time.time() - start) * 1000
+            _progress("done", 1.0)
+            return PipelineResult(
+                mesh_path=output_path,
+                vertices=len(cached_mesh.vertices),
+                faces=len(cached_mesh.faces),
+                is_watertight=bool(cached_mesh.is_watertight),
+                wall_thickness_ok=True,
+                duration_ms=total_ms,
+                stages={"cache_hit": total_ms / 1000},
+                warnings=[],
+            )
 
         # Stage 1: Load and preprocess image
         logger.info("Stage 1: Loading image...")
@@ -128,8 +161,14 @@ class PrintForgePipeline:
         self._export(optimized_mesh, output_path)
         stages["export"] = time.time() - t0
         
+        # Cache the result for future lookups
+        try:
+            self._cache.put(image_bytes, output_path)
+        except Exception as e:
+            logger.warning("Failed to cache result: %s", e)
+
         total_ms = (time.time() - start) * 1000
-        
+
         result = PipelineResult(
             mesh_path=output_path,
             vertices=len(optimized_mesh.vertices) if optimized_mesh else 0,
@@ -178,35 +217,56 @@ class PrintForgePipeline:
         return composited_img
 
     def _infer_3d(self, image):
-        """Run TripoSR inference using the configured backend."""
+        """Run 3D inference using the configured backend with a full fallback chain.
+
+        Fallback order (when backend is 'auto'):
+            1. Hunyuan3D-2 (full model via Gradio)
+            2. Hunyuan3D-2mini (lighter model via Gradio)
+            3. TripoSR via HuggingFace Inference API
+            4. Local TripoSR inference
+            5. Placeholder mesh (last resort)
+        """
         backend = self.config.inference_backend
 
         if backend == "placeholder":
             logger.info("Using placeholder mesh (configured)")
             return self._create_placeholder_mesh()
 
+        # Step 1: Hunyuan3D-2 (full)
         if backend in ("auto", "hunyuan3d"):
             mesh = self._infer_hunyuan3d(image)
             if mesh is not None:
                 return mesh
             if backend == "hunyuan3d":
                 raise RuntimeError("Hunyuan3D inference failed and backend is 'hunyuan3d'")
+            logger.warning("Fallback: Hunyuan3D-2 failed, trying Hunyuan3D-2mini...")
 
+        # Step 2: Hunyuan3D-2mini (lighter)
+        if backend in ("auto",):
+            mesh = self._infer_hunyuan3d_mini(image)
+            if mesh is not None:
+                return mesh
+            logger.warning("Fallback: Hunyuan3D-2mini failed, trying TripoSR HF API...")
+
+        # Step 3: TripoSR via HuggingFace API
         if backend in ("auto", "api"):
             mesh = self._infer_hf_api(image)
             if mesh is not None:
                 return mesh
             if backend == "api":
                 raise RuntimeError("HuggingFace API inference failed and backend is 'api'")
+            logger.warning("Fallback: HF API failed, trying local inference...")
 
+        # Step 4: Local TripoSR
         if backend in ("auto", "local"):
             mesh = self._infer_local(image)
             if mesh is not None:
                 return mesh
             if backend == "local":
                 raise RuntimeError("Local TripoSR inference failed and backend is 'local'")
+            logger.warning("Fallback: Local inference failed, using placeholder mesh...")
 
-        # auto fallback to placeholder
+        # Step 5: Placeholder (last resort)
         logger.warning("All inference backends unavailable — using placeholder mesh")
         return self._create_placeholder_mesh()
 
@@ -243,6 +303,41 @@ class PrintForgePipeline:
             return mesh
         except Exception as e:
             logger.warning(f"Hunyuan3D inference failed: {e}")
+            return None
+
+    def _infer_hunyuan3d_mini(self, image):
+        """Run inference via Hunyuan3D-2mini Gradio Space (lighter model)."""
+        try:
+            from gradio_client import Client, handle_file
+        except ImportError:
+            logger.info("gradio_client not installed — skipping Hunyuan3D-2mini backend")
+            return None
+
+        try:
+            import trimesh
+            import tempfile
+
+            # Save PIL image to temp file for handle_file
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                image.save(tmp, format="PNG")
+                temp_path = tmp.name
+
+            client = Client("Tencent/Hunyuan3D-2mini")
+            result = client.predict(
+                "", handle_file(temp_path), None, None, None,
+                api_name="/shape_generation",
+            )
+
+            # result[0]['value'] contains the GLB file path
+            glb_path = result[0]["value"]
+            mesh = trimesh.load(glb_path, file_type="glb", force="mesh")
+            logger.info(f"Hunyuan3D-2mini inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+
+            # Clean up temp file
+            os.unlink(temp_path)
+            return mesh
+        except Exception as e:
+            logger.warning(f"Hunyuan3D-2mini inference failed: {e}")
             return None
 
     def _infer_hf_api(self, image):
