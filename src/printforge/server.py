@@ -206,6 +206,8 @@ async def optimize(
                 "support_estimate_mm3": round(orientation.support_volume_estimate, 0),
                 "base_area_mm2": round(orientation.base_area, 1),
                 "score": round(orientation.score, 2),
+                "overhang_percentage": round(orientation.overhang_percentage, 1),
+                "support_contact_area_mm2": round(orientation.support_contact_area, 1),
             },
             "estimate": {
                 "print_time_minutes": estimate.print_time_minutes,
@@ -227,6 +229,53 @@ async def optimize(
     except Exception as e:
         logger.exception("Optimization failed")
         raise HTTPException(500, f"Optimization failed: {str(e)}")
+
+
+@app.post("/api/cost")
+async def cost_estimate(
+    mesh_file: UploadFile = File(...),
+    material: str = Form("PLA"),
+    infill: float = Form(0.15),
+    layer_height: float = Form(0.2),
+):
+    """Upload a mesh and get a full cost estimate."""
+    import trimesh
+    from .cost_estimator import CostEstimator
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        tmp.write(content)
+        mesh_path = tmp.name
+
+    try:
+        mesh = trimesh.load(mesh_path)
+        estimator = CostEstimator()
+        est = estimator.estimate(mesh, material=material, infill=infill, layer_height=layer_height)
+
+        return JSONResponse({
+            "status": "ok",
+            "material": material.upper(),
+            "infill_percent": round(infill * 100, 1),
+            "layer_height_mm": layer_height,
+            "cost": {
+                "filament_grams": est.filament_grams,
+                "filament_meters": est.filament_meters,
+                "filament_cost_usd": est.filament_cost_usd,
+                "print_time_hours": est.print_time_hours,
+                "electricity_cost_usd": est.electricity_cost_usd,
+                "total_cost_usd": est.total_cost_usd,
+            },
+            "mesh_info": {
+                "vertices": len(mesh.vertices),
+                "faces": len(mesh.faces),
+                "is_watertight": bool(mesh.is_watertight),
+                "bounding_box_mm": mesh.bounding_box.extents.tolist(),
+            },
+        })
+    except Exception as e:
+        logger.exception("Cost estimation failed")
+        raise HTTPException(500, f"Cost estimation failed: {str(e)}")
 
 
 @app.post("/api/split")

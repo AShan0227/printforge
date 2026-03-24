@@ -39,6 +39,8 @@ class Orientation:
     base_area: float               # mm^2 of contact with build plate
     height: float                  # mm print height
     score: float                   # lower is better
+    overhang_percentage: float = 0.0  # % of total face area that overhangs
+    support_contact_area: float = 0.0  # mm^2 of support contact with model
 
 
 @dataclass
@@ -64,12 +66,36 @@ class PrintOptimizer:
     def find_best_orientation(self, mesh, num_candidates: int = 24) -> Orientation:
         """Find the rotation that minimizes support material.
 
-        Tests multiple orientations and scores them based on estimated
-        support volume, base contact area, and print height.
+        Analyzes mesh face normals for 6 cardinal rotations (±X, ±Y, ±Z as up)
+        plus additional candidates. Scores based on overhanging face area and
+        support contact area.
+
+        Overhang: face normal Z component < -0.5 (>45° from vertical).
+        Score: total_overhang_area × 0.7 + total_support_contact_area × 0.3
         """
+        import trimesh
+
         best = None
 
-        for rotation in self._generate_rotations(num_candidates):
+        # Always include the 6 cardinal rotations (±X, ±Y, ±Z as up)
+        cardinal_rotations = self._generate_cardinal_rotations()
+        extra_rotations = self._generate_rotations(num_candidates)
+
+        # Deduplicate: use cardinals first, then fill with extras
+        all_rotations = list(cardinal_rotations)
+        for rot in extra_rotations:
+            if len(all_rotations) >= max(num_candidates, 6):
+                break
+            # Skip if nearly identical to an existing cardinal
+            is_dup = False
+            for existing in cardinal_rotations:
+                if np.allclose(rot, existing, atol=1e-6):
+                    is_dup = True
+                    break
+            if not is_dup:
+                all_rotations.append(rot)
+
+        for rotation in all_rotations:
             rotated = mesh.copy()
             rotated.apply_transform(rotation)
 
@@ -80,9 +106,29 @@ class PrintOptimizer:
 
         logger.info(
             f"Best orientation: height={best.height:.1f}mm, "
-            f"support_est={best.support_volume_estimate:.0f}mm^3, score={best.score:.2f}"
+            f"support_est={best.support_volume_estimate:.0f}mm^3, "
+            f"overhang={best.overhang_percentage:.1f}%, score={best.score:.2f}"
         )
         return best
+
+    def _generate_cardinal_rotations(self) -> list[np.ndarray]:
+        """Generate the 6 cardinal rotations (±X, ±Y, ±Z as up direction)."""
+        import trimesh
+
+        rotations = []
+        # +Z up (identity — default orientation)
+        rotations.append(np.eye(4))
+        # -Z up (flip upside down — 180° around X)
+        rotations.append(trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0]))
+        # +X up (90° around Y)
+        rotations.append(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+        # -X up (-90° around Y)
+        rotations.append(trimesh.transformations.rotation_matrix(-np.pi / 2, [0, 1, 0]))
+        # +Y up (-90° around X)
+        rotations.append(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
+        # -Y up (90° around X)
+        rotations.append(trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0]))
+        return rotations
 
     def estimate_print_time(
         self,
@@ -284,35 +330,47 @@ class PrintOptimizer:
         return rotations[:n]
 
     def _score_orientation(self, mesh, rotation_matrix: np.ndarray) -> Orientation:
-        """Score a mesh orientation for printability."""
+        """Score a mesh orientation for printability using face normal analysis.
+
+        Overhang = face normal Z component < -0.5 (more than 45° from vertical).
+        Score = total_overhang_area × 0.7 + support_contact_area × 0.3
+        """
         extents = mesh.bounding_box.extents
         height = extents[2]
         base_area = extents[0] * extents[1]
 
-        # Estimate support volume from downward-facing faces
+        overhang_area = 0.0
+        support_contact_area = 0.0
+        total_face_area = 0.0
         support_volume = 0.0
+
         if hasattr(mesh, "face_normals") and len(mesh.face_normals) > 0:
             normals = mesh.face_normals
             areas = mesh.area_faces if hasattr(mesh, "area_faces") else np.ones(len(normals))
+            total_face_area = float(np.sum(areas))
 
-            # Faces with z-normal < -0.5 need support
+            # Overhanging faces: Z component of normal < -0.5
             down_mask = normals[:, 2] < -0.5
             if np.any(down_mask):
-                down_areas = areas[down_mask]
-                # Rough support volume: area * height above build plate
+                overhang_area = float(np.sum(areas[down_mask]))
+
+                # Support contact area = projected overhang area onto XY plane
+                # Weight by how much each face points downward
+                down_components = np.abs(normals[down_mask, 2])
+                support_contact_area = float(np.sum(areas[down_mask] * down_components))
+
+                # Estimate support volume from overhanging faces
                 centroids = mesh.triangles_center[down_mask] if hasattr(mesh, "triangles_center") else None
                 if centroids is not None:
                     heights_above_plate = centroids[:, 2] - mesh.bounds[0][2]
-                    support_volume = float(np.sum(down_areas * heights_above_plate))
+                    support_volume = float(np.sum(areas[down_mask] * heights_above_plate))
                 else:
-                    support_volume = float(np.sum(down_areas) * height * 0.3)
+                    support_volume = float(overhang_area * height * 0.3)
 
-        # Score: minimize support, minimize height, maximize base area
-        score = (
-            support_volume * 0.5 +
-            height * 10.0 +
-            (1.0 / max(base_area, 1.0)) * 1000.0
-        )
+        overhang_percentage = (overhang_area / total_face_area * 100.0) if total_face_area > 0 else 0.0
+
+        # Score: weighted combination of overhang area and support contact area
+        score = overhang_area * 0.7 + support_contact_area * 0.3
 
         return Orientation(
             rotation_matrix=rotation_matrix,
@@ -320,4 +378,6 @@ class PrintOptimizer:
             base_area=base_area,
             height=height,
             score=score,
+            overhang_percentage=overhang_percentage,
+            support_contact_area=support_contact_area,
         )

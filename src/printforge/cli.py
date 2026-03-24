@@ -152,6 +152,44 @@ def cmd_optimize(args):
         print(f"No printability issues found.")
 
 
+def cmd_cost(args):
+    """Estimate printing cost for a mesh."""
+    _setup_logging(args.verbose)
+    import trimesh
+    from .cost_estimator import CostEstimator
+
+    mesh_path = Path(args.mesh)
+    if not mesh_path.exists():
+        print(f"Error: File not found: {mesh_path}", file=sys.stderr)
+        sys.exit(1)
+
+    mesh = trimesh.load(str(mesh_path))
+    infill = args.infill / 100.0 if args.infill > 1 else args.infill
+
+    estimator = CostEstimator()
+    est = estimator.estimate(
+        mesh,
+        material=args.material,
+        infill=infill,
+        layer_height=args.layer_height,
+    )
+
+    print(f"PrintForge — Cost Estimate")
+    print(f"  Model:    {mesh_path}")
+    print(f"  Material: {args.material.upper()}")
+    print(f"  Infill:   {infill*100:.0f}%")
+    print(f"  Layer:    {args.layer_height}mm")
+    print()
+    print(f"Filament:")
+    print(f"  Weight:   {est.filament_grams:.1f}g")
+    print(f"  Length:   {est.filament_meters:.2f}m")
+    print(f"  Cost:     ${est.filament_cost_usd:.2f}")
+    print()
+    print(f"Print time: {est.print_time_hours:.1f}h")
+    print(f"Electricity: ${est.electricity_cost_usd:.2f}")
+    print(f"Total cost:  ${est.total_cost_usd:.2f}")
+
+
 def cmd_split(args):
     """Split a mesh into printable parts."""
     _setup_logging(args.verbose)
@@ -246,6 +284,15 @@ def main():
     p_opt.add_argument("--material", default="pla", help="Material (pla/petg/abs/tpu)")
     p_opt.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_opt.set_defaults(func=cmd_optimize)
+
+    # ── printforge cost <mesh> ──────────────────────────────────────
+    p_cost = subparsers.add_parser("cost", help="Estimate printing cost for a mesh")
+    p_cost.add_argument("mesh", help="Input mesh file (STL/OBJ/3MF)")
+    p_cost.add_argument("--material", default="PLA", help="Material (PLA/PETG/ABS/TPU)")
+    p_cost.add_argument("--infill", type=float, default=20, help="Infill percentage (0-100)")
+    p_cost.add_argument("--layer-height", type=float, default=0.2, help="Layer height in mm")
+    p_cost.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_cost.set_defaults(func=cmd_cost)
 
     # ── printforge split <mesh> ─────────────────────────────────────
     p_split = subparsers.add_parser("split", help="Split large mesh into printable parts")
