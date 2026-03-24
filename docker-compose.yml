@@ -1,0 +1,10 @@
+services:
+  printforge:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    restart: unless-stopped

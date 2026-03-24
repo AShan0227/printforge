@@ -30,3 +30,9 @@ ws = ["websockets"]
 
 [project.scripts]
 printforge = "printforge.cli:main"
+
+[tool.setuptools.package-data]
+printforge = ["../../web/**/*"]
+
+[tool.setuptools.data-files]
+"share/printforge/web" = ["web/index.html"]
