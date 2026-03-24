@@ -1,8 +1,10 @@
+MANIFEST.in
 README.md
 pyproject.toml
 src/printforge/__init__.py
 src/printforge/bambu.py
 src/printforge/cli.py
+src/printforge/cost_estimator.py
 src/printforge/formats.py
 src/printforge/multi_view.py
 src/printforge/part_splitter.py
@@ -16,5 +18,8 @@ src/printforge.egg-info/dependency_links.txt
 src/printforge.egg-info/entry_points.txt
 src/printforge.egg-info/requires.txt
 src/printforge.egg-info/top_level.txt
+src/printforge/../../web/index.html
+tests/test_cost_and_orientation.py
 tests/test_optimizer.py
 tests/test_pipeline.py
+web/index.html

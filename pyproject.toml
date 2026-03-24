@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "printforge"
-version = "0.2.0"
+version = "1.1.0"
 description = "One photo to 3D print. Open-source, local, print-optimized."
 requires-python = ">=3.9"
 license = {text = "MIT"}

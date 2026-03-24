@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: printforge
-Version: 0.2.0
+Version: 1.1.0
 Summary: One photo to 3D print. Open-source, local, print-optimized.
 License: MIT
 Requires-Python: >=3.9
@@ -19,3 +19,7 @@ Requires-Dist: python-multipart
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Requires-Dist: ruff; extra == "dev"
+Provides-Extra: bg
+Requires-Dist: rembg; extra == "bg"
+Provides-Extra: ws
+Requires-Dist: websockets; extra == "ws"
