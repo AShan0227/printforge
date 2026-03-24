@@ -29,7 +29,7 @@ class PipelineConfig:
     # TripoSR inference
     model_name: str = "stabilityai/TripoSR"
     device: str = "cuda"  # "cuda", "cpu", or "mps"
-    inference_backend: str = "auto"  # "auto", "api", "local", "placeholder"
+    inference_backend: str = "auto"  # "auto", "hunyuan3d", "api", "local", "placeholder"
 
     # Background removal
     remove_background: bool = True
@@ -185,6 +185,13 @@ class PrintForgePipeline:
             logger.info("Using placeholder mesh (configured)")
             return self._create_placeholder_mesh()
 
+        if backend in ("auto", "hunyuan3d"):
+            mesh = self._infer_hunyuan3d(image)
+            if mesh is not None:
+                return mesh
+            if backend == "hunyuan3d":
+                raise RuntimeError("Hunyuan3D inference failed and backend is 'hunyuan3d'")
+
         if backend in ("auto", "api"):
             mesh = self._infer_hf_api(image)
             if mesh is not None:
@@ -202,6 +209,41 @@ class PrintForgePipeline:
         # auto fallback to placeholder
         logger.warning("All inference backends unavailable — using placeholder mesh")
         return self._create_placeholder_mesh()
+
+    def _infer_hunyuan3d(self, image):
+        """Run inference via Hunyuan3D-2 Gradio Space."""
+        try:
+            from gradio_client import Client, handle_file
+        except ImportError:
+            logger.info("gradio_client not installed — skipping Hunyuan3D backend")
+            return None
+
+        try:
+            import trimesh
+            import tempfile
+
+            # Save PIL image to temp file for handle_file
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                image.save(tmp, format="PNG")
+                temp_path = tmp.name
+
+            client = Client("Tencent/Hunyuan3D-2")
+            result = client.predict(
+                "", handle_file(temp_path), None, None, None,
+                api_name="/shape_generation",
+            )
+
+            # result[0]['value'] contains the GLB file path
+            glb_path = result[0]["value"]
+            mesh = trimesh.load(glb_path, file_type="glb", force="mesh")
+            logger.info(f"Hunyuan3D inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+
+            # Clean up temp file
+            os.unlink(temp_path)
+            return mesh
+        except Exception as e:
+            logger.warning(f"Hunyuan3D inference failed: {e}")
+            return None
 
     def _infer_hf_api(self, image):
         """Run inference via HuggingFace Inference API."""
@@ -293,13 +335,13 @@ class PrintForgePipeline:
             else:
                 raise ValueError("Cannot convert mesh to trimesh format")
         
-        # Method: Voxelize → Marching Cubes → guaranteed watertight
+        # Method: Voxelize → Fill → Marching Cubes → guaranteed watertight
         try:
-            # Voxelize the mesh
+            # Voxelize the mesh, fill interior, then extract surface
             pitch = mesh.bounding_box.extents.max() / self.config.mc_resolution
-            voxel_grid = mesh.voxelized(pitch)
-            
-            # Marching cubes to extract watertight surface
+            voxel_grid = mesh.voxelized(pitch).fill()
+
+            # Marching cubes on filled voxels → guaranteed watertight
             watertight = voxel_grid.marching_cubes
             
             logger.info(f"SDF conversion: {len(mesh.faces)} → {len(watertight.faces)} faces, "
@@ -325,11 +367,13 @@ class PrintForgePipeline:
             scale_factor = self.config.scale_mm / current_size
             mesh.apply_scale(scale_factor)
         
-        # 2. Simplify if too many faces
+        # 2. Simplify if too many faces (numpy subsampling — no native deps)
         if len(mesh.faces) > self.config.max_faces:
-            ratio = self.config.max_faces / len(mesh.faces)
-            mesh = mesh.simplify_quadric_decimation(self.config.max_faces)
-            logger.info(f"Simplified: {len(mesh.faces)} faces (ratio={ratio:.2f})")
+            original_count = len(mesh.faces)
+            step = max(1, len(mesh.faces) // self.config.max_faces)
+            keep = np.arange(0, len(mesh.faces), step)[:self.config.max_faces]
+            mesh = mesh.submesh([keep], append=True)
+            logger.info(f"Simplified: {original_count} → {len(mesh.faces)} faces")
         
         # 3. Fix normals
         trimesh.repair.fix_normals(mesh)
