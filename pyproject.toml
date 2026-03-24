@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "printforge"
+version = "0.1.0"
+description = "One photo to 3D print. Open-source, local, print-optimized."
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "torch>=2.0",
+    "torchvision",
+    "trimesh>=4.0",
+    "numpy",
+    "Pillow",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+printforge = "printforge.cli:main"
