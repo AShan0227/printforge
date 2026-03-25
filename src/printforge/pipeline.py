@@ -305,7 +305,13 @@ class PrintForgePipeline:
             back_path = _save_temp(views["back"])
             left_path = _save_temp(views["left"])
 
-            client = Client("Tencent/Hunyuan3D-2")
+            hf_token = os.environ.get("HF_TOKEN")
+            if hf_token:
+                logger.info("Using authenticated HF access (increased ZeroGPU quota)")
+                client = Client("Tencent/Hunyuan3D-2", hf_token=hf_token)
+            else:
+                logger.info("No HF_TOKEN set — using anonymous access (limited quota)")
+                client = Client("Tencent/Hunyuan3D-2")
             result = client.predict(
                 "",
                 handle_file(front_path),
@@ -348,7 +354,13 @@ class PrintForgePipeline:
                 image.save(tmp, format="PNG")
                 temp_path = tmp.name
 
-            client = Client("Tencent/Hunyuan3D-2mini")
+            hf_token = os.environ.get("HF_TOKEN")
+            if hf_token:
+                logger.info("Using authenticated HF access for Hunyuan3D-2mini")
+                client = Client("Tencent/Hunyuan3D-2mini", hf_token=hf_token)
+            else:
+                logger.info("No HF_TOKEN set — using anonymous access for Hunyuan3D-2mini")
+                client = Client("Tencent/Hunyuan3D-2mini")
             result = client.predict(
                 "", handle_file(temp_path), None, None, None,
                 api_name="/shape_generation",
