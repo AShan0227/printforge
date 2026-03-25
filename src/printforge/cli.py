@@ -564,6 +564,24 @@ def cmd_video(args):
         print("Multi-view reconstruction: pending (frame extraction only for now)")
 
 
+def cmd_printers(args):
+    """List all supported printer profiles."""
+    _setup_logging(args.verbose)
+    from .printer_profiles import PRINTER_DB
+
+    print("PrintForge — Supported Printer Profiles")
+    print()
+    for key in sorted(PRINTER_DB):
+        p = PRINTER_DB[key]
+        vol = f"{p.build_volume[0]:.0f}x{p.build_volume[1]:.0f}x{p.build_volume[2]:.0f}mm"
+        nozzles = ", ".join(f"{n}mm" for n in p.nozzle_sizes)
+        auto = "Yes" if p.auto_level else "No"
+        print(f"  {key:20s}  {p.name}")
+        print(f"    Build volume: {vol}  Speed: {p.max_speed:.0f}mm/s  Auto-level: {auto}")
+        print(f"    Nozzles: {nozzles}  Default layer: {p.default_layer_height}mm  Infill: {p.default_infill*100:.0f}%")
+        print()
+
+
 def _print_result(result):
     """Print pipeline result summary."""
     print(f"{'='*50}")
@@ -696,6 +714,11 @@ def main():
     p_video.add_argument("--frames", type=int, default=8, help="Number of frames to extract (default: 8)")
     p_video.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_video.set_defaults(func=cmd_video)
+
+    # ── printforge printers ─────────────────────────────────────────
+    p_printers = subparsers.add_parser("printers", help="List all supported printer profiles")
+    p_printers.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_printers.set_defaults(func=cmd_printers)
 
     # ── Legacy: printforge <image> (backward compat) ────────────────
     args = parser.parse_args()

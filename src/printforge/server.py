@@ -831,6 +831,32 @@ async def batch_process(
 # ── Printer endpoints ─────────────────────────────────────────────
 
 @app.get(
+    "/api/printers/profiles",
+    tags=["Printers"],
+    summary="List all supported printer profiles",
+    description="Returns detailed specs for all supported printer models.",
+)
+async def printer_profiles():
+    """List all supported printer profiles with specs."""
+    from .printer_profiles import PRINTER_DB
+    return JSONResponse({
+        "profiles": {
+            key: {
+                "name": p.name,
+                "build_volume": {"x": p.build_volume[0], "y": p.build_volume[1], "z": p.build_volume[2]},
+                "max_speed": p.max_speed,
+                "heated_bed": p.heated_bed,
+                "auto_level": p.auto_level,
+                "nozzle_sizes": p.nozzle_sizes,
+                "default_layer_height": p.default_layer_height,
+                "default_infill": p.default_infill,
+            }
+            for key, p in sorted(PRINTER_DB.items())
+        }
+    })
+
+
+@app.get(
     "/api/printers",
     tags=["Printers"],
     summary="Discover printers on the local network",
