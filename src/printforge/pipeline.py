@@ -271,7 +271,12 @@ class PrintForgePipeline:
         return self._create_placeholder_mesh()
 
     def _infer_hunyuan3d(self, image):
-        """Run inference via Hunyuan3D-2 Gradio Space."""
+        """Run inference via Hunyuan3D-2 Gradio Space with multi-view enhancement.
+
+        Hunyuan3D-2's /shape_generation endpoint accepts:
+            (text_prompt, front_image, back_image, left_image, ...)
+        We synthesize back/left views from the front image for better results.
+        """
         try:
             from gradio_client import Client, handle_file
         except ImportError:
@@ -281,15 +286,32 @@ class PrintForgePipeline:
         try:
             import trimesh
             import tempfile
+            from .multi_view import MultiViewEnhancer
 
-            # Save PIL image to temp file for handle_file
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                image.save(tmp, format="PNG")
-                temp_path = tmp.name
+            # Generate multi-view approximations from the front image
+            enhancer = MultiViewEnhancer()
+            views = enhancer.enhance_from_pil(image)
+
+            temp_files = []
+
+            def _save_temp(pil_img):
+                tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                pil_img.save(tmp, format="PNG")
+                tmp.close()
+                temp_files.append(tmp.name)
+                return tmp.name
+
+            front_path = _save_temp(views["front"])
+            back_path = _save_temp(views["back"])
+            left_path = _save_temp(views["left"])
 
             client = Client("Tencent/Hunyuan3D-2")
             result = client.predict(
-                "", handle_file(temp_path), None, None, None,
+                "",
+                handle_file(front_path),
+                handle_file(back_path),
+                handle_file(left_path),
+                None,
                 api_name="/shape_generation",
             )
 
@@ -298,8 +320,12 @@ class PrintForgePipeline:
             mesh = trimesh.load(glb_path, file_type="glb", force="mesh")
             logger.info(f"Hunyuan3D inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
 
-            # Clean up temp file
-            os.unlink(temp_path)
+            # Clean up temp files
+            for f in temp_files:
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
             return mesh
         except Exception as e:
             logger.warning(f"Hunyuan3D inference failed: {e}")

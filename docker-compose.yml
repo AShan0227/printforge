@@ -5,6 +5,13 @@ services:
       - "8000:8000"
     volumes:
       - ./output:/app/output
+      - ./web:/app/web
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

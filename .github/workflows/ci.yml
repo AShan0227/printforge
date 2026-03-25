@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -16,6 +17,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
 
       - name: Install dependencies
         run: pip install -e '.[dev]'
@@ -25,4 +31,5 @@ jobs:
         continue-on-error: true
 
       - name: Test
-        run: pytest tests/ -v
+        run: pytest tests/ -v --timeout=300
+        timeout-minutes: 5

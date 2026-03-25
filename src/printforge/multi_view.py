@@ -81,6 +81,22 @@ class MultiViewEnhancer:
         )
         return views
 
+    def enhance_from_pil(self, pil_image: Image.Image) -> Dict[str, Image.Image]:
+        """Produce {front, back, left, right} views from a PIL Image directly.
+
+        Convenience method that avoids writing to disk. Used by the pipeline
+        when passing multi-view images to Hunyuan3D-2.
+        """
+        size = self.config.image_size
+        front = pil_image.convert("RGB").resize((size, size), Image.LANCZOS)
+
+        views: Dict[str, Image.Image] = {"front": front}
+        views["back"] = ImageOps.mirror(front)
+        views["left"] = self._synthesize_side(front, direction="left")
+        views["right"] = self._synthesize_side(front, direction="right")
+
+        return views
+
     # ── Legacy API (kept for backward compatibility) ─────────────────
 
     def generate_views(self, image_path: str) -> List[Image.Image]:

@@ -173,3 +173,40 @@ class RateLimiter:
             "limit": self.max_requests,
             "window_seconds": self.window_seconds,
         }
+
+
+# ── Magic bytes validation ─────────────────────────────────────────
+
+# Image format signatures (magic bytes)
+_IMAGE_SIGNATURES = {
+    "jpeg": [b"\xff\xd8\xff"],
+    "png": [b"\x89PNG\r\n\x1a\n"],
+    "bmp": [b"BM"],
+    "webp": [b"RIFF"],  # RIFF header; full check includes WEBP at offset 8
+    "gif": [b"GIF87a", b"GIF89a"],
+    "tiff": [b"II\x2a\x00", b"MM\x00\x2a"],
+}
+
+
+def validate_image_magic_bytes(data: bytes) -> Tuple[bool, str]:
+    """Validate that file content starts with known image magic bytes.
+
+    Args:
+        data: Raw file bytes.
+
+    Returns:
+        Tuple of (is_valid_image: bool, detected_type: str).
+        detected_type is the format name if valid, or "unknown" if not.
+    """
+    if not data:
+        return False, "empty"
+
+    for fmt, signatures in _IMAGE_SIGNATURES.items():
+        for sig in signatures:
+            if data[:len(sig)] == sig:
+                # Extra check for WEBP: bytes 8-12 must be "WEBP"
+                if fmt == "webp" and data[8:12] != b"WEBP":
+                    continue
+                return True, fmt
+
+    return False, "unknown"

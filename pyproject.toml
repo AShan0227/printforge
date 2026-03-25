@@ -21,10 +21,12 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "python-multipart",
+    "scikit-image",
+    "gradio_client",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "httpx"]
 bg = ["rembg"]
 ws = ["websockets"]
 

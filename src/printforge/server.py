@@ -340,14 +340,26 @@ async def generate(
     format: str = "3mf",
     size_mm: float = 50.0,
     add_base: bool = False,
+    backend: str = "auto",
 ):
     """Upload an image, get a 3D printable file."""
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(400, "File must be an image (jpg/png)")
+    # Validate backend parameter
+    valid_backends = ("auto", "hunyuan3d", "api", "local", "placeholder")
+    if backend not in valid_backends:
+        raise HTTPException(400, f"Invalid backend: {backend}. Must be one of: {', '.join(valid_backends)}")
 
     suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_in:
         content = await image.read()
+
+        # Validate magic bytes and file size
+        from .safety import validate_image_magic_bytes
+        is_valid, detected = validate_image_magic_bytes(content)
+        if not is_valid:
+            raise HTTPException(400, f"File is not a valid image (detected: {detected})")
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(400, "File too large (max 50MB)")
+
         tmp_in.write(content)
         input_path = tmp_in.name
 
@@ -356,11 +368,13 @@ async def generate(
         output_path = tmp_out.name
 
     try:
-        pipeline = get_pipeline()
-        pipeline.config.output_format = format
-        pipeline.config.scale_mm = size_mm
-        pipeline.config.add_base = add_base
-
+        config = PipelineConfig(
+            inference_backend=backend,
+            output_format=format,
+            scale_mm=size_mm,
+            add_base=add_base,
+        )
+        pipeline = PrintForgePipeline(config)
         result = pipeline.run(input_path, output_path)
 
         return FileResponse(
@@ -374,6 +388,11 @@ async def generate(
                 "X-PrintForge-Duration-Ms": str(int(result.duration_ms)),
             },
         )
+    except RuntimeError as e:
+        err_msg = str(e).lower()
+        if "hunyuan" in err_msg or "gradio" in err_msg or "space" in err_msg:
+            raise HTTPException(503, "Hunyuan3D Space is currently unavailable. Please retry later.")
+        raise HTTPException(500, f"Generation failed: {str(e)}")
     except Exception as e:
         logger.exception("Pipeline failed")
         raise HTTPException(500, f"Generation failed: {str(e)}")

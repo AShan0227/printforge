@@ -590,14 +590,17 @@
                 endpoint = '/api/generate';
                 body = formData;
             } else {
+                const formData = new FormData();
+                formData.append('description', document.getElementById('text-input').value);
+                formData.append('format', document.getElementById('format').value);
+                formData.append('size_mm', document.getElementById('size').value);
                 endpoint = '/api/text-to-3d';
-                body = JSON.stringify({ text: document.getElementById('text-input').value, format: document.getElementById('format').value });
+                body = formData;
             }
 
             const resp = await fetch(API + endpoint, {
                 method: 'POST',
                 body: body,
-                headers: currentMode === 'text' ? { 'Content-Type': 'application/json' } : undefined,
             });
 
             if (!resp.ok) throw new Error(await resp.text());

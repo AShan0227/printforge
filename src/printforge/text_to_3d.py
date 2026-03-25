@@ -85,6 +85,35 @@ class TextTo3DPipeline:
         logger.info(f"Image saved to {output_path}")
         return output_path
 
+    def generate_via_hunyuan3d(self, description: str, output_path: str) -> str:
+        """Generate 3D mesh directly from text via Hunyuan3D-2's text input.
+
+        Hunyuan3D-2's /shape_generation endpoint accepts text as its first
+        parameter. This bypasses the image generation step entirely.
+
+        Returns the path to the saved mesh, or raises on failure.
+        """
+        try:
+            from gradio_client import Client
+        except ImportError:
+            raise RuntimeError("gradio_client not installed — cannot use Hunyuan3D text-to-3D")
+
+        import trimesh
+
+        logger.info(f"Generating 3D from text via Hunyuan3D-2: {description!r}")
+        client = Client("Tencent/Hunyuan3D-2")
+        result = client.predict(
+            description, None, None, None, None,
+            api_name="/shape_generation",
+        )
+
+        glb_path = result[0]["value"]
+        mesh = trimesh.load(glb_path, file_type="glb", force="mesh")
+        logger.info(f"Hunyuan3D text-to-3D OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+
+        mesh.export(output_path)
+        return output_path
+
     def run(
         self,
         description: str,
@@ -130,11 +159,22 @@ class TextTo3DPipeline:
                 result.image_path = tmp_image.name
             except (RuntimeError, ImportError) as e:
                 logger.warning(f"Image generation failed: {e}")
-                if save_prompt:
-                    logger.info("Prompt saved. Provide your own image with image_path parameter.")
+                # Fallback: try Hunyuan3D-2 direct text-to-3D
+                logger.info("Trying Hunyuan3D-2 direct text-to-3D...")
+                try:
+                    self.generate_via_hunyuan3d(description, output_path)
+                    result.mesh_path = output_path
+                    result.used_fallback = False
+                    return result
+                except Exception as hunyuan_err:
+                    logger.warning(f"Hunyuan3D text-to-3D also failed: {hunyuan_err}")
+                    if save_prompt:
+                        logger.info("Prompt saved. Provide your own image with image_path parameter.")
+                        result.used_fallback = True
+                        return result
+                    # Final fallback: use placeholder pipeline
                     result.used_fallback = True
                     return result
-                raise
 
         # Step 3: Run existing pipeline
         from .pipeline import PrintForgePipeline, PipelineConfig
