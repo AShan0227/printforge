@@ -353,10 +353,15 @@ async def generate(
         content = await image.read()
 
         # Validate magic bytes and file size
-        from .safety import validate_image_magic_bytes
+        from .safety import validate_image_magic_bytes, VALID_IMAGE_FORMATS
         is_valid, detected = validate_image_magic_bytes(content)
         if not is_valid:
-            raise HTTPException(400, f"File is not a valid image (detected: {detected})")
+            accepted = ", ".join(sorted(VALID_IMAGE_FORMATS))
+            raise HTTPException(
+                400,
+                f"File is not a valid image (detected: {detected}). "
+                f"Accepted formats: {accepted}",
+            )
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(400, "File too large (max 50MB)")
 
@@ -390,12 +395,33 @@ async def generate(
         )
     except RuntimeError as e:
         err_msg = str(e).lower()
+        if "quota" in err_msg or "rate" in err_msg:
+            raise HTTPException(
+                503,
+                "Hunyuan3D quota exceeded. Try again later or set the HF_TOKEN "
+                "environment variable for higher limits.",
+            )
         if "hunyuan" in err_msg or "gradio" in err_msg or "space" in err_msg:
-            raise HTTPException(503, "Hunyuan3D Space is currently unavailable. Please retry later.")
-        raise HTTPException(500, f"Generation failed: {str(e)}")
+            raise HTTPException(
+                503,
+                "Hunyuan3D Space is currently unavailable. Try again later "
+                "or set HF_TOKEN env var for authenticated access.",
+            )
+        # Identify which pipeline stage failed when possible
+        raise HTTPException(500, f"Pipeline failed at runtime: {e}")
     except Exception as e:
         logger.exception("Pipeline failed")
-        raise HTTPException(500, f"Generation failed: {str(e)}")
+        stage_hint = ""
+        err_str = str(e).lower()
+        if "load" in err_str or "image" in err_str:
+            stage_hint = " (stage: image loading)"
+        elif "infer" in err_str or "model" in err_str:
+            stage_hint = " (stage: 3D inference)"
+        elif "watertight" in err_str or "voxel" in err_str:
+            stage_hint = " (stage: watertight conversion)"
+        elif "export" in err_str:
+            stage_hint = " (stage: mesh export)"
+        raise HTTPException(500, f"Generation failed{stage_hint}: {e}")
 
 
 @app.post(

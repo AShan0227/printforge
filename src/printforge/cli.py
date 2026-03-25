@@ -561,7 +561,7 @@ def cmd_video(args):
     if result.mesh_path:
         print(f"Mesh: {result.mesh_path}")
     else:
-        print("Multi-view reconstruction: pending (frame extraction only for now)")
+        print("3D inference failed — check logs for details.")
 
 
 def cmd_printers(args):

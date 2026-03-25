@@ -41,6 +41,10 @@ class PipelineConfig:
     # SDF / Marching Cubes
     mc_resolution: int = 256  # Marching cubes grid resolution
 
+    # Watertight conversion
+    smooth_iterations: int = 2  # Laplacian smoothing passes after MC
+    adaptive_resolution: bool = True  # Scale MC resolution by model size
+
     # Print optimization
     min_wall_thickness_mm: float = 0.4  # FDM minimum
     max_faces: int = 200_000  # Simplify if exceeding
@@ -450,14 +454,37 @@ class PrintForgePipeline:
         import trimesh
         return trimesh.creation.box(extents=[1.0, 1.0, 1.0])
     
+    def _choose_mc_resolution(self, mesh) -> int:
+        """Pick marching-cubes resolution based on model bounding-box size.
+
+        Small objects (< 30mm):  96
+        Medium (30-100mm):      128
+        Large (> 100mm):        192
+
+        Falls back to self.config.mc_resolution when adaptive_resolution is False.
+        """
+        if not self.config.adaptive_resolution:
+            return self.config.mc_resolution
+
+        extent = mesh.bounding_box.extents.max()
+        if extent < 30:
+            return 96
+        elif extent <= 100:
+            return 128
+        else:
+            return 192
+
     def _make_watertight(self, mesh):
-        """Convert mesh to watertight using SDF → Marching Cubes."""
+        """Convert mesh to watertight using SDF → Marching Cubes.
+
+        Applies adaptive MC resolution and optional Laplacian smoothing.
+        """
         import trimesh
-        
+
         if hasattr(mesh, "is_watertight") and mesh.is_watertight:
             logger.info("Mesh is already watertight, skipping SDF conversion")
             return mesh
-        
+
         # Convert to trimesh if not already
         if not isinstance(mesh, trimesh.Trimesh):
             if hasattr(mesh, "vertices") and hasattr(mesh, "faces"):
@@ -467,20 +494,27 @@ class PrintForgePipeline:
                 )
             else:
                 raise ValueError("Cannot convert mesh to trimesh format")
-        
+
         # Method: Voxelize → Fill → Marching Cubes → guaranteed watertight
         try:
-            # Voxelize the mesh, fill interior, then extract surface
-            pitch = mesh.bounding_box.extents.max() / self.config.mc_resolution
+            resolution = self._choose_mc_resolution(mesh)
+            pitch = mesh.bounding_box.extents.max() / resolution
             voxel_grid = mesh.voxelized(pitch).fill()
 
             # Marching cubes on filled voxels → guaranteed watertight
             watertight = voxel_grid.marching_cubes
-            
+
+            # Laplacian smoothing preserves shape while removing staircase artifacts
+            if self.config.smooth_iterations > 0:
+                trimesh.smoothing.filter_laplacian(
+                    watertight, iterations=self.config.smooth_iterations
+                )
+
             logger.info(f"SDF conversion: {len(mesh.faces)} → {len(watertight.faces)} faces, "
+                        f"resolution={resolution}, smooth={self.config.smooth_iterations}, "
                         f"watertight={watertight.is_watertight}")
             return watertight
-            
+
         except Exception as e:
             logger.warning(f"SDF conversion failed ({e}), attempting repair instead")
             # Fallback: use trimesh repair

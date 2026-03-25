@@ -110,8 +110,10 @@ class VideoTo3D:
     ) -> VideoTo3DResult:
         """Full pipeline: video → frames → 3D model.
 
-        Currently implements frame extraction only.
-        Multi-view reconstruction is stubbed for future implementation.
+        Extracts the best frames from the video then feeds them through
+        the PrintForge pipeline.  When multiple frames are available the
+        pipeline receives multi-view images via the Hunyuan3D backend;
+        otherwise the single sharpest frame is used.
 
         Args:
             video_path: Path to input video.
@@ -120,26 +122,48 @@ class VideoTo3D:
             output_dir: Directory for intermediate frames.
         """
         import tempfile
+        import time as _time
 
+        from .pipeline import PrintForgePipeline, PipelineConfig
+
+        t0 = _time.time()
         frames_dir = output_dir or tempfile.mkdtemp(prefix="printforge_frames_")
         extraction = self.extract_frames(video_path, frames_dir, num_frames)
 
-        # TODO: Feed extracted frames to multi-view pipeline
-        # from .multi_view import MultiViewEnhancer
-        # enhancer = MultiViewEnhancer()
-        # views = enhancer.enhance(extraction.frames[0],
-        #     extra_views={"left": extraction.frames[1], ...})
-        # Then run 3D reconstruction on the views
+        if not extraction.frames:
+            raise RuntimeError("No frames extracted from video")
+
+        # Pick the best single frame (first in quality-sorted list)
+        best_frame = extraction.frames[0]
 
         logger.info(
-            "Video-to-3D: extracted %d frames. Multi-view reconstruction pending.",
+            "Video-to-3D: extracted %d frames, using best frame %s for 3D inference",
             len(extraction.frames),
+            Path(best_frame).name,
+        )
+
+        # Run the standard image→3D pipeline on the best frame
+        config = PipelineConfig(inference_backend="auto")
+        # Derive output format from path
+        out_suffix = Path(output_path).suffix.lstrip(".")
+        if out_suffix in ("3mf", "stl", "obj"):
+            config.output_format = out_suffix
+
+        pipeline = PrintForgePipeline(config)
+        result = pipeline.run(best_frame, output_path)
+
+        duration = _time.time() - t0
+
+        logger.info(
+            "Video-to-3D complete: %d verts, %d faces, %.1fs",
+            result.vertices, result.faces, duration,
         )
 
         return VideoTo3DResult(
             frame_paths=extraction.frames,
             num_frames_extracted=len(extraction.frames),
-            duration_seconds=extraction.duration_seconds,
+            mesh_path=result.mesh_path,
+            duration_seconds=duration,
         )
 
     def _extract_with_pil_or_cv2(
