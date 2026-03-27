@@ -27,6 +27,7 @@ from .feishu_notifier import send_notification, GenerationResult
 from .metrics import get_metrics
 from .health import get_health_checker
 from .model_store import store_model, list_models, get_model, delete_model, get_user_stats
+from .queue import GenerationQueue
 
 logger = logging.getLogger(__name__)
 
@@ -1398,6 +1399,94 @@ async def create_new_key(request: Request):
 
 import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+
+# ── Async Generation ──────────────────────────────────────────────────
+
+@app.post("/api/v2/generate/async", tags=["Generation"])
+async def generate_async(
+    request: Request,
+    image: UploadFile = File(...),
+    format: str = "stl",
+    size_mm: float = 50.0,
+    add_base: bool = False,
+    backend: str = "auto",
+    multi_view: bool = False,
+):
+    """Submit async generation job. Returns task_id immediately."""
+    api_key_raw = request.headers.get("X-API-Key", "")
+    api_key_obj = validate_api_key(api_key_raw) if api_key_raw else None
+    if api_key_raw and not api_key_obj:
+        raise HTTPException(401, "Invalid API key")
+    if api_key_obj and api_key_obj.quota_exhausted:
+        raise HTTPException(429, "Quota exhausted")
+
+    # Save uploaded image
+    suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await image.read()
+        tmp.write(content)
+        input_path = tmp.name
+
+    queue = GenerationQueue()
+    await queue.ensure_workers()
+
+    task_id = queue.submit(
+        image_path=input_path,
+        output_format=format,
+        backend=backend,
+        multi_view=multi_view,
+        scale_mm=size_mm,
+        add_base=add_base,
+        user_id=api_key_obj.user_id if api_key_obj else "anonymous",
+        api_key=api_key_raw,
+    )
+
+    return JSONResponse({
+        "task_id": task_id,
+        "status": "pending",
+        "queue_size": queue.queue_size,
+    })
+
+
+@app.get("/api/v2/generate/{task_id}/status", tags=["Generation"])
+async def get_generation_status(task_id: str):
+    """Check async generation task status."""
+    queue = GenerationQueue()
+    status = queue.get_status(task_id)
+    if not status:
+        raise HTTPException(404, "Task not found")
+    return JSONResponse(status)
+
+
+@app.get("/api/v2/generate/{task_id}/result", tags=["Generation"])
+async def get_generation_result(task_id: str):
+    """Download result of completed async generation."""
+    queue = GenerationQueue()
+    task = queue.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.status.value != "done":
+        raise HTTPException(409, f"Task not done yet (status: {task.status.value})")
+    if not task.result_path or not Path(task.result_path).exists():
+        raise HTTPException(404, "Result file not found")
+    
+    return FileResponse(
+        task.result_path,
+        media_type="application/octet-stream",
+        filename=f"{task_id}.{task.output_format}",
+    )
+
+
+@app.get("/api/v2/queue", tags=["Generation"])
+async def queue_status():
+    """Get async generation queue status."""
+    queue = GenerationQueue()
+    return JSONResponse({
+        "queue_size": queue.queue_size,
+        "active": queue.active_count,
+        "recent": queue.list_tasks(limit=10),
+    })
 
 
 # ── Model Management ──────────────────────────────────────────────────
