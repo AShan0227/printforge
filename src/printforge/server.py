@@ -28,6 +28,8 @@ from .metrics import get_metrics
 from .health import get_health_checker
 from .model_store import store_model, list_models, get_model, delete_model, get_user_stats
 from .queue import GenerationQueue
+from .rate_limit import generate_limiter, ip_limiter
+from .webhook import register_webhook, unregister_webhook, list_webhooks, fire_event, WebhookEvent
 
 logger = logging.getLogger(__name__)
 
@@ -1401,6 +1403,60 @@ import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
+# ── Webhooks ──────────────────────────────────────────────────────────
+
+@app.post("/api/v2/webhooks", tags=["Webhooks"])
+async def add_webhook(request: Request):
+    """Register a webhook URL for generation events."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key required")
+    key_obj = validate_api_key(api_key)
+    if not key_obj:
+        raise HTTPException(401, "Invalid API key")
+    
+    body = await request.json()
+    url = body.get("url")
+    if not url:
+        raise HTTPException(400, "url required")
+    
+    register_webhook(key_obj.user_id, url, body.get("secret", ""), body.get("events"))
+    return JSONResponse({"status": "registered", "url": url})
+
+
+@app.get("/api/v2/webhooks", tags=["Webhooks"])
+async def get_webhooks(request: Request):
+    """List registered webhooks."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key required")
+    key_obj = validate_api_key(api_key)
+    if not key_obj:
+        raise HTTPException(401, "Invalid API key")
+    
+    return JSONResponse({"webhooks": list_webhooks(key_obj.user_id)})
+
+
+@app.delete("/api/v2/webhooks", tags=["Webhooks"])
+async def remove_webhook(request: Request):
+    """Remove a webhook."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key required")
+    key_obj = validate_api_key(api_key)
+    if not key_obj:
+        raise HTTPException(401, "Invalid API key")
+    
+    body = await request.json()
+    url = body.get("url")
+    if not url:
+        raise HTTPException(400, "url required")
+    
+    if not unregister_webhook(key_obj.user_id, url):
+        raise HTTPException(404, "Webhook not found")
+    return JSONResponse({"status": "removed"})
+
+
 # ── Async Generation ──────────────────────────────────────────────────
 
 @app.post("/api/v2/generate/async", tags=["Generation"])
@@ -1605,3 +1661,4 @@ def start():
     """Start the web server."""
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
