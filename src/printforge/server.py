@@ -1373,9 +1373,13 @@ async def create_new_key(request: Request):
     })
 
 
-# ── 3D Preview route ────────────────────────────────────────────────
+# ── Static files & startup ─────────────────────────────────────────
 
+import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+
+# ── 3D Preview route ────────────────────────────────────────────────
 
 @app.get("/preview", tags=["UI"])
 async def preview_page():
@@ -1386,12 +1390,6 @@ async def preview_page():
         with open(preview_path) as f:
             return HTMLResponse(f.read())
     raise HTTPException(404, "Preview page not found")
-
-
-# ── Static files & startup ─────────────────────────────────────────
-
-import os
-_web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 if os.path.isdir(_web_dir):
     from fastapi.responses import HTMLResponse
