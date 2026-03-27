@@ -22,7 +22,7 @@ PRICING = {
 
 @dataclass
 class UsageRecord:
-    key_id: str
+    key: str  # API key
     user_id: str
     timestamp: str
     operation: str  # generate_3d | analyze | optimize | batch
@@ -32,13 +32,13 @@ class UsageRecord:
 
 
 def record_usage(raw_key: str, operation: str, success: bool, duration_ms: int, model_used: str = "unknown"):
-    """Record a generation event."""
+    """Record a generation event and increment usage counter."""
     key = validate_api_key(raw_key)
     if not key:
         return
 
     record = UsageRecord(
-        key_id=key.key_id,
+        key=raw_key,
         user_id=key.user_id,
         timestamp=datetime.now(timezone.utc).isoformat(),
         operation=operation,
@@ -48,9 +48,9 @@ def record_usage(raw_key: str, operation: str, success: bool, duration_ms: int, 
     )
 
     usage = _load_usage()
-    if key.key_id not in usage:
-        usage[key.key_id] = []
-    usage[key.key_id].append(asdict(record))
+    if key.user_id not in usage:
+        usage[key.user_id] = []
+    usage[key.user_id].append(asdict(record))
     _save_usage(usage)
 
     # Also increment the key's generation counter
@@ -64,7 +64,7 @@ def get_usage_history(raw_key: str, limit: int = 50) -> list:
         return []
     
     usage = _load_usage()
-    records = usage.get(key.key_id, [])
+    records = usage.get(key.user_id, [])
     return records[-limit:]
 
 
@@ -75,7 +75,7 @@ def get_monthly_usage(raw_key: str) -> Dict:
         return {}
     
     usage = _load_usage()
-    records = usage.get(key.key_id, [])
+    records = usage.get(key.user_id, [])
     
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

@@ -61,6 +61,10 @@ class PipelineConfig:
     add_base: bool = False  # Add flat base for easier printing
     base_height_mm: float = 2.0
 
+    # Multi-view
+    multi_view: bool = False  # Generate multiple views for better reconstruction
+    multi_view_count: int = 4  # front/back/left/right
+
     # Output
     output_format: str = "3mf"  # "3mf" or "stl"
     scale_mm: float = 50.0  # Default size in mm
@@ -146,12 +150,19 @@ class PrintForgePipeline:
             image = self._remove_background(image)
             stages["remove_background"] = time.time() - t0
 
-        # Stage 2: TripoSR inference → raw mesh
-        logger.info("Stage 2: TripoSR inference...")
-        _progress("inference", 0.25)
-        t0 = time.time()
-        raw_mesh = self._infer_3d(image)
-        stages["inference"] = time.time() - t0
+        # Stage 2: 3D inference (single or multi-view)
+        if self.config.multi_view:
+            logger.info("Stage 2: Multi-view inference...")
+            _progress("multi_view", 0.20)
+            t0 = time.time()
+            raw_mesh = self._infer_multi_view(image)
+            stages["multi_view_inference"] = time.time() - t0
+        else:
+            logger.info("Stage 2: TripoSR inference...")
+            _progress("inference", 0.25)
+            t0 = time.time()
+            raw_mesh = self._infer_3d(image)
+            stages["inference"] = time.time() - t0
         
         # Stage 3: SDF conversion → watertight mesh
         logger.info("Stage 3: SDF watertight conversion...")
@@ -478,6 +489,46 @@ class PrintForgePipeline:
             import traceback
             traceback.print_exc()
             return None
+
+    def _infer_multi_view(self, image):
+        """Run multi-view inference: generate views → infer each → merge meshes.
+
+        Uses the MultiViewEnhancer to create front/back/left/right views,
+        runs TripoSR on each view, then merges the resulting meshes.
+        """
+        import trimesh
+        from .multi_view import MultiViewEnhancer
+
+        enhancer = MultiViewEnhancer()
+        views = enhancer.enhance_from_pil(image)
+        logger.info(f"Multi-view: generated {len(views)} views")
+
+        meshes = []
+        for view_name, view_img in views.items():
+            logger.info(f"Multi-view: inferring {view_name}...")
+            mesh = self._infer_3d(view_img)
+            if mesh is not None:
+                if not isinstance(mesh, trimesh.Trimesh):
+                    if hasattr(mesh, 'vertices') and hasattr(mesh, 'faces'):
+                        mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=mesh.faces)
+                meshes.append(mesh)
+                logger.info(f"  {view_name}: {len(mesh.vertices)} verts")
+            else:
+                logger.warning(f"  {view_name}: inference failed, skipping")
+
+        if not meshes:
+            logger.error("Multi-view: all views failed, falling back to placeholder")
+            return self._create_placeholder_mesh()
+
+        if len(meshes) == 1:
+            return meshes[0]
+
+        # Merge strategy: use the front view as primary (best quality),
+        # average vertex positions with overlapping meshes for better coverage
+        # Simple approach: concatenate all meshes (more vertices = more detail)
+        merged = trimesh.util.concatenate(meshes)
+        logger.info(f"Multi-view: merged {len(meshes)} meshes → {len(merged.vertices)} verts, {len(merged.faces)} faces")
+        return merged
 
     def _create_placeholder_mesh(self):
         """Create a simple cube mesh for testing without TripoSR."""
