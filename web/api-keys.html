@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrintForge — API Keys</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 24px; font-weight: 300; margin-bottom: 8px; }
+    .subtitle { color: #8b949e; margin-bottom: 24px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    input, button { font-size: 14px; padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; }
+    input { background: #0d1117; color: #e6edf3; width: 100%; margin-bottom: 12px; }
+    input:focus { outline: none; border-color: #238636; }
+    button { background: #238636; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { background: #2ea043; }
+    button.secondary { background: #21262d; border: 1px solid #30363d; }
+    .key-display { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 13px; word-break: break-all; margin: 12px 0; }
+    .warning { background: #d292221a; border: 1px solid #d29222; border-radius: 6px; padding: 12px; margin: 12px 0; color: #d29922; font-size: 13px; }
+    .stat { display: flex; justify-content: space-between; padding: 6px 0; }
+    .stat-label { color: #8b949e; }
+    .hidden { display: none; }
+    .nav { margin-bottom: 24px; display: flex; gap: 12px; }
+    .nav a { color: #58a6ff; text-decoration: none; font-size: 14px; }
+    .nav a:hover { text-decoration: underline; }
+    .code { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; font-family: monospace; font-size: 12px; white-space: pre; overflow-x: auto; margin: 12px 0; color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="/">Home</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/preview">3D Preview</a>
+    <a href="/docs">API Docs</a>
+  </div>
+
+  <h1>🔑 API Keys</h1>
+  <p class="subtitle">Register and manage your PrintForge API keys</p>
+
+  <!-- Register -->
+  <div class="card" id="register-card">
+    <h2 style="margin-bottom:16px">Create Account</h2>
+    <input type="text" id="reg-username" placeholder="Username">
+    <input type="password" id="reg-password" placeholder="Password">
+    <input type="email" id="reg-email" placeholder="Email (optional)">
+    <button onclick="register()">Register</button>
+  </div>
+
+  <!-- Result -->
+  <div class="card hidden" id="result-card">
+    <h2 style="margin-bottom:12px">✅ Account Created</h2>
+    <p style="margin-bottom:8px">Your API Key:</p>
+    <div class="key-display" id="api-key-display"></div>
+    <div class="warning">⚠️ Save this key now — it won't be shown again!</div>
+    <p style="margin-top:16px; color:#8b949e">Quick start:</p>
+    <div class="code" id="curl-example"></div>
+  </div>
+
+  <!-- Quota -->
+  <div class="card" id="quota-card">
+    <h2 style="margin-bottom:16px">Check Quota</h2>
+    <input type="text" id="check-key" placeholder="Paste your API key (pf_...)">
+    <button onclick="checkQuota()">Check</button>
+    <div id="quota-result" style="margin-top:12px"></div>
+  </div>
+
+  <script>
+    async function register() {
+      const username = document.getElementById('reg-username').value;
+      const password = document.getElementById('reg-password').value;
+      const email = document.getElementById('reg-email').value;
+      
+      if (!username || !password) { alert('Username and password required'); return; }
+      
+      const resp = await fetch('/api/v2/register', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password, email}),
+      });
+      
+      if (!resp.ok) { alert('Registration failed: ' + (await resp.text())); return; }
+      
+      const data = await resp.json();
+      document.getElementById('api-key-display').textContent = data.api_key;
+      document.getElementById('curl-example').textContent = 
+        `curl -X POST http://localhost:8000/api/generate \\
+  -H "X-API-Key: ${data.api_key}" \\
+  -F "image=@photo.png" \\
+  -o model.stl`;
+      
+      document.getElementById('result-card').classList.remove('hidden');
+      document.getElementById('register-card').classList.add('hidden');
+    }
+    
+    async function checkQuota() {
+      const key = document.getElementById('check-key').value;
+      if (!key) { alert('Enter API key'); return; }
+      
+      const resp = await fetch('/api/v2/quota', {headers: {'X-API-Key': key}});
+      const el = document.getElementById('quota-result');
+      
+      if (!resp.ok) {
+        el.innerHTML = '<p style="color:#f85149">Invalid key</p>';
+        return;
+      }
+      
+      const data = await resp.json();
+      el.innerHTML = `
+        <div class="stat"><span class="stat-label">Used</span><span>${data.generation_count || 0}</span></div>
+        <div class="stat"><span class="stat-label">Quota</span><span>${data.quota_limit || 0}</span></div>
+        <div class="stat"><span class="stat-label">Remaining</span><span style="color:${(data.remaining||0) > 0 ? '#238636' : '#f85149'}">${data.remaining || 0}</span></div>
+        <div class="stat"><span class="stat-label">Active</span><span>${data.is_active ? '✅' : '❌'}</span></div>
+      `;
+    }
+  </script>
+</body>
+</html>

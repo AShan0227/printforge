@@ -1718,6 +1718,17 @@ async def health_detail():
 
 # ── 3D Preview route ────────────────────────────────────────────────
 
+@app.get("/api-keys", tags=["UI"])
+async def api_keys_page():
+    """API key management page."""
+    keys_path = os.path.join(_web_dir, "api-keys.html") if os.path.isdir(_web_dir) else None
+    if keys_path and os.path.exists(keys_path):
+        from fastapi.responses import HTMLResponse
+        with open(keys_path) as f:
+            return HTMLResponse(f.read())
+    raise HTTPException(404, "API keys page not found")
+
+
 @app.get("/dashboard", tags=["UI"])
 async def dashboard_page():
     """Admin dashboard with real-time stats."""
