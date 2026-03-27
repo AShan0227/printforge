@@ -13,13 +13,24 @@ python-multipart
 scikit-image
 gradio_client
 
+[all]
+printforge[auth,bg,local,ws]
+
+[auth]
+pyjwt
+
 [bg]
-rembg
+rembg[cpu]
 
 [dev]
 pytest
 ruff
 httpx
+
+[local]
+transformers
+omegaconf
+einops
 
 [ws]
 websockets

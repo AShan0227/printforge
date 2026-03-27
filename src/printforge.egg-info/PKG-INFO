@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: printforge
-Version: 2.0.0
-Summary: One photo to 3D print. Open-source, local, print-optimized.
+Version: 2.2.0
+Summary: AI-powered photo to 3D print. Multi-view inference, API auth, real-time preview.
 License: MIT
 Requires-Python: >=3.9
 Requires-Dist: torch>=2.0
@@ -23,6 +23,14 @@ Requires-Dist: pytest; extra == "dev"
 Requires-Dist: ruff; extra == "dev"
 Requires-Dist: httpx; extra == "dev"
 Provides-Extra: bg
-Requires-Dist: rembg; extra == "bg"
+Requires-Dist: rembg[cpu]; extra == "bg"
 Provides-Extra: ws
 Requires-Dist: websockets; extra == "ws"
+Provides-Extra: auth
+Requires-Dist: pyjwt; extra == "auth"
+Provides-Extra: local
+Requires-Dist: transformers; extra == "local"
+Requires-Dist: omegaconf; extra == "local"
+Requires-Dist: einops; extra == "local"
+Provides-Extra: all
+Requires-Dist: printforge[auth,bg,local,ws]; extra == "all"
