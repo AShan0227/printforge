@@ -1411,6 +1411,25 @@ import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
+# ── Materials ─────────────────────────────────────────────────────────
+
+@app.get("/api/v2/materials", tags=["Tools"])
+async def list_materials_endpoint():
+    """List available 3D printing materials with properties."""
+    from .material_db import list_materials
+    return JSONResponse({"materials": list_materials()})
+
+
+@app.post("/api/v2/materials/estimate", tags=["Tools"])
+async def estimate_cost_endpoint(request: Request):
+    """Estimate material cost for a given volume."""
+    from .material_db import estimate_material_cost
+    body = await request.json()
+    volume = body.get("volume_cm3", 0)
+    material = body.get("material", "pla")
+    return JSONResponse(estimate_material_cost(volume, material))
+
+
 # ── Mesh Converter ────────────────────────────────────────────────────
 
 @app.post("/api/v2/convert", tags=["Tools"])
