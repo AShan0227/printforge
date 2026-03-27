@@ -1632,6 +1632,17 @@ async def health_detail():
 
 # ── 3D Preview route ────────────────────────────────────────────────
 
+@app.get("/dashboard", tags=["UI"])
+async def dashboard_page():
+    """Admin dashboard with real-time stats."""
+    dash_path = os.path.join(_web_dir, "dashboard.html") if os.path.isdir(_web_dir) else None
+    if dash_path and os.path.exists(dash_path):
+        from fastapi.responses import HTMLResponse
+        with open(dash_path) as f:
+            return HTMLResponse(f.read())
+    raise HTTPException(404, "Dashboard not found")
+
+
 @app.get("/preview", tags=["UI"])
 async def preview_page():
     """Serve the Three.js 3D preview page."""

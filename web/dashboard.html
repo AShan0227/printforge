@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrintForge Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d1117; color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      padding: 20px;
+    }
+    h1 { font-size: 24px; font-weight: 300; margin-bottom: 24px; color: #238636; }
+    h2 { font-size: 16px; font-weight: 500; margin-bottom: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 24px; }
+    .card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px;
+    }
+    .stat { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; }
+    .stat:last-child { border: none; }
+    .stat-label { color: #8b949e; }
+    .stat-value { font-weight: 600; }
+    .stat-value.green { color: #238636; }
+    .stat-value.red { color: #f85149; }
+    .stat-value.yellow { color: #d29922; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; color: #8b949e; font-size: 12px; padding: 8px; border-bottom: 1px solid #30363d; }
+    td { padding: 8px; border-bottom: 1px solid #21262d; font-size: 13px; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;
+    }
+    .badge.done { background: #238636; color: #fff; }
+    .badge.running { background: #1f6feb; color: #fff; }
+    .badge.pending { background: #d29922; color: #000; }
+    .badge.failed { background: #f85149; color: #fff; }
+    .badge.healthy { background: #238636; color: #fff; }
+    .badge.degraded { background: #d29922; color: #000; }
+    #refresh-timer { position: fixed; top: 10px; right: 20px; color: #484f58; font-size: 12px; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>⚡ PrintForge Dashboard</h1>
+  <div id="refresh-timer">Refreshing...</div>
+  
+  <div class="grid">
+    <div class="card">
+      <h2>System Health</h2>
+      <div id="health-content">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Queue Status</h2>
+      <div id="queue-content">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Metrics</h2>
+      <div id="metrics-content">Loading...</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:20px">
+    <h2>Recent Models</h2>
+    <div id="models-content">Loading...</div>
+  </div>
+
+  <div class="card">
+    <h2>Generation Queue</h2>
+    <div id="tasks-content">Loading...</div>
+  </div>
+
+  <script>
+    const API = '';
+
+    async function fetchJSON(url) {
+      try {
+        const r = await fetch(url);
+        return r.ok ? await r.json() : null;
+      } catch { return null; }
+    }
+    
+    async function fetchText(url) {
+      try {
+        const r = await fetch(url);
+        return r.ok ? await r.text() : null;
+      } catch { return null; }
+    }
+
+    function badge(status) {
+      const cls = status === 'ok' || status === 'done' || status === 'healthy' ? 'done' :
+                  status === 'running' || status === 'in_progress' ? 'running' :
+                  status === 'pending' || status === 'degraded' ? 'pending' : 'failed';
+      return `<span class="badge ${cls}">${status}</span>`;
+    }
+
+    async function refreshHealth() {
+      const data = await fetchJSON('/health/detail');
+      if (!data) { document.getElementById('health-content').innerHTML = 'Error'; return; }
+      let html = `<div class="stat"><span class="stat-label">Status</span><span class="stat-value">${badge(data.status)}</span></div>`;
+      if (data.checks) {
+        for (const [name, check] of Object.entries(data.checks)) {
+          html += `<div class="stat"><span class="stat-label">${name}</span><span class="stat-value">${check.message || (check.healthy ? '✅' : '⚠️')}</span></div>`;
+        }
+      }
+      document.getElementById('health-content').innerHTML = html;
+    }
+
+    async function refreshQueue() {
+      const data = await fetchJSON('/api/v2/queue');
+      if (!data) { document.getElementById('queue-content').innerHTML = 'No queue data'; return; }
+      let html = `
+        <div class="stat"><span class="stat-label">Queue Size</span><span class="stat-value">${data.queue_size || 0}</span></div>
+        <div class="stat"><span class="stat-label">Active</span><span class="stat-value">${data.active || 0}</span></div>
+      `;
+      document.getElementById('queue-content').innerHTML = html;
+    }
+
+    async function refreshMetrics() {
+      const text = await fetchText('/metrics');
+      if (!text) { document.getElementById('metrics-content').innerHTML = 'No metrics'; return; }
+      const lines = text.split('\n').filter(l => l && !l.startsWith('#'));
+      let html = '';
+      for (const line of lines.slice(0, 8)) {
+        const [name, value] = line.split(' ');
+        html += `<div class="stat"><span class="stat-label">${name}</span><span class="stat-value">${value}</span></div>`;
+      }
+      document.getElementById('metrics-content').innerHTML = html || 'No data';
+    }
+
+    async function refreshModels() {
+      const data = await fetchJSON('/api/v2/models?limit=10');
+      if (!data || !data.models || !data.models.length) {
+        document.getElementById('models-content').innerHTML = '<p style="color:#484f58">No models generated yet</p>';
+        return;
+      }
+      let html = '<table><tr><th>ID</th><th>Format</th><th>Verts</th><th>Faces</th><th>Duration</th><th>Multi-view</th></tr>';
+      for (const m of data.models.slice(0, 10)) {
+        html += `<tr>
+          <td><a href="/api/v2/models/${m.model_id}/download">${m.model_id?.slice(0, 12) || '?'}</a></td>
+          <td>${m.output_format || '?'}</td>
+          <td>${(m.vertices || 0).toLocaleString()}</td>
+          <td>${(m.faces || 0).toLocaleString()}</td>
+          <td>${((m.duration_ms || 0) / 1000).toFixed(1)}s</td>
+          <td>${m.multi_view ? '✅' : '—'}</td>
+        </tr>`;
+      }
+      html += '</table>';
+      document.getElementById('models-content').innerHTML = html;
+    }
+
+    async function refreshTasks() {
+      const data = await fetchJSON('/api/v2/queue');
+      if (!data || !data.recent || !data.recent.length) {
+        document.getElementById('tasks-content').innerHTML = '<p style="color:#484f58">No tasks</p>';
+        return;
+      }
+      let html = '<table><tr><th>Task</th><th>Status</th><th>Duration</th><th>Verts</th></tr>';
+      for (const t of data.recent) {
+        html += `<tr>
+          <td>${t.task_id?.slice(0, 12) || '?'}</td>
+          <td>${badge(t.status)}</td>
+          <td>${((t.duration_ms || 0) / 1000).toFixed(1)}s</td>
+          <td>${(t.vertices || 0).toLocaleString()}</td>
+        </tr>`;
+      }
+      html += '</table>';
+      document.getElementById('tasks-content').innerHTML = html;
+    }
+
+    async function refreshAll() {
+      await Promise.all([refreshHealth(), refreshQueue(), refreshMetrics(), refreshModels(), refreshTasks()]);
+      document.getElementById('refresh-timer').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+    }
+
+    refreshAll();
+    setInterval(refreshAll, 5000);
+  </script>
+</body>
+</html>
