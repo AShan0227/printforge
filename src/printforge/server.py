@@ -339,13 +339,28 @@ def get_cache() -> ImageCache:
     },
 )
 async def generate(
+    request: Request,
     image: UploadFile = File(...),
     format: str = "3mf",
     size_mm: float = 50.0,
     add_base: bool = False,
     backend: str = "auto",
+    multi_view: bool = False,
 ):
-    """Upload an image, get a 3D printable file."""
+    """Upload an image, get a 3D printable file.
+
+    Requires API key via X-API-Key header (optional for now, enforced when configured).
+    """
+    # API Key auth (optional — if key provided, validate and track usage)
+    api_key_raw = request.headers.get("X-API-Key")
+    api_key_obj = None
+    if api_key_raw:
+        api_key_obj = validate_api_key(api_key_raw)
+        if api_key_obj is None:
+            raise HTTPException(401, "Invalid API key")
+        if api_key_obj.quota_exhausted:
+            raise HTTPException(429, "API key quota exhausted. Upgrade your plan or contact support.")
+
     # Validate backend parameter
     valid_backends = ("auto", "hunyuan3d", "api", "local", "placeholder")
     if backend not in valid_backends:
@@ -381,9 +396,30 @@ async def generate(
             output_format=format,
             scale_mm=size_mm,
             add_base=add_base,
+            multi_view=multi_view,
         )
         pipeline = PrintForgePipeline(config)
         result = pipeline.run(input_path, output_path)
+
+        # Record billing if API key was provided
+        if api_key_raw and api_key_obj:
+            try:
+                record_usage(api_key_raw, "generate_3d", True, int(result.duration_ms), backend)
+            except Exception as billing_err:
+                logger.warning(f"Billing record failed: {billing_err}")
+
+        # Send Feishu notification (async, best-effort)
+        try:
+            send_notification(GenerationResult(
+                success=True,
+                model_file=output_path,
+                preview_url=f"/preview?url=/static/{Path(output_path).name}",
+                operation="generate_3d",
+                duration_ms=int(result.duration_ms),
+                user_email=api_key_obj.user_id if api_key_obj else None,
+            ))
+        except Exception:
+            pass  # non-critical
 
         return FileResponse(
             output_path,
@@ -394,6 +430,7 @@ async def generate(
                 "X-PrintForge-Faces": str(result.faces),
                 "X-PrintForge-Watertight": str(result.is_watertight),
                 "X-PrintForge-Duration-Ms": str(int(result.duration_ms)),
+                "X-PrintForge-Multi-View": str(multi_view),
             },
         )
     except RuntimeError as e:
@@ -1218,6 +1255,7 @@ async def ws_progress(websocket: WebSocket):
 
         await websocket.send_json({
             "stage": "done",
+            "download_url": f"/static/{Path(output_path).name}",
             "progress": 1.0,
             "result": {
                 "mesh_path": result.mesh_path,
