@@ -2089,3 +2089,152 @@ async def slice_file(
         # Clean up temp mesh file
         Path(mesh_path).unlink(missing_ok=True)
 
+
+# ── Print Farm Management ───────────────────────────────────────────────
+
+class PrinterRegisterRequest(BaseModel):
+    name: str = Field(..., description="Printer display name")
+    model: str = Field(..., description="Printer model (e.g., Bambu X1C)")
+    ip_address: str = Field(..., description="Printer IP address")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata")
+
+
+class PrinterRegisterResponse(BaseModel):
+    status: str
+    printer: Dict[str, Any]
+
+
+class TaskAssignRequest(BaseModel):
+    job_id: str = Field(..., description="Job ID to assign")
+    filename: str = Field(..., description="File name to print")
+    material: str = Field(default="PLA", description="Filament material")
+    estimated_time_min: int = Field(default=60, description="Estimated print time in minutes")
+
+
+class TaskAssignResponse(BaseModel):
+    status: str
+    task: Dict[str, Any]
+    printer: Dict[str, Any]
+
+
+@app.post(
+    "/api/v2/printers/register",
+    tags=["Print Farm"],
+    summary="Register a printer",
+    response_model=PrinterRegisterResponse,
+)
+async def register_printer(req: PrinterRegisterRequest):
+    """Register a new printer in the print farm."""
+    try:
+        printer = print_farm.register_printer(
+            name=req.name,
+            model=req.model,
+            ip_address=req.ip_address,
+            metadata=req.metadata or {},
+        )
+        return JSONResponse({
+            "status": "registered",
+            "printer": printer.to_dict(),
+        })
+    except Exception as e:
+        logger.exception("Failed to register printer")
+        raise HTTPException(500, str(e))
+
+
+@app.get(
+    "/api/v2/printers",
+    tags=["Print Farm"],
+    summary="List all printers",
+)
+async def list_printers():
+    """Get all registered printers in the print farm."""
+    return JSONResponse({
+        "status": "ok",
+        "farm_stats": print_farm.get_farm_stats(),
+        "printers": [p.to_dict() for p in print_farm.list_printers()],
+    })
+
+
+@app.post(
+    "/api/v2/printers/{printer_id}/assign",
+    tags=["Print Farm"],
+    summary="Assign task to printer",
+    response_model=TaskAssignResponse,
+)
+async def assign_task_to_printer(printer_id: str, req: TaskAssignRequest):
+    """Manually assign a print task to a specific printer."""
+    task = print_farm.assign_task(
+        printer_id=printer_id,
+        job_id=req.job_id,
+        filename=req.filename,
+        material=req.material,
+        estimated_time_min=req.estimated_time_min,
+    )
+    if not task:
+        raise HTTPException(404, "Printer not found or not available")
+    
+    printer = print_farm.get_printer(printer_id)
+    return JSONResponse({
+        "status": "assigned",
+        "task": asdict(task),
+        "printer": printer.to_dict(),
+    })
+
+
+@app.post(
+    "/api/v2/printers/{printer_id}/complete",
+    tags=["Print Farm"],
+)
+async def complete_print_task(
+    printer_id: str,
+    success: bool = Query(..., description="Whether the task succeeded"),
+    error_message: Optional[str] = Query(None, description="Error message if failed"),
+):
+    """Mark a printer's current task as completed."""
+    if not print_farm.complete_task(printer_id, success, error_message):
+        raise HTTPException(404, "Printer or task not found")
+    return JSONResponse({"status": "completed", "printer": print_farm.get_printer(printer_id).to_dict()})
+
+
+@app.post(
+    "/api/v2/printers/{printer_id}/status",
+    tags=["Print Farm"],
+)
+async def update_printer_status(
+    printer_id: str,
+    status: str = Query(..., description="New status: idle, offline, error, maintenance"),
+):
+    """Update a printer's status."""
+    try:
+        new_status = PrinterStatus(status)
+    except ValueError:
+        raise HTTPException(400, f"Invalid status. Must be one of: {[s.value for s in PrinterStatus]}")
+    
+    printer = print_farm.update_printer_status(printer_id, new_status)
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    return JSONResponse({"status": "updated", "printer": printer.to_dict()})
+
+
+@app.post(
+    "/api/v2/printers/auto-assign",
+    tags=["Print Farm"],
+    response_model=TaskAssignResponse,
+)
+async def auto_assign_task(req: TaskAssignRequest):
+    """Automatically assign a task to the best available printer."""
+    result = print_farm.auto_assign_task(
+        job_id=req.job_id,
+        filename=req.filename,
+        material=req.material,
+        estimated_time_min=req.estimated_time_min,
+    )
+    if not result:
+        raise HTTPException(503, "No available printers")
+    
+    printer, task = result
+    return JSONResponse({
+        "status": "assigned",
+        "task": asdict(task),
+        "printer": printer.to_dict(),
+    })
