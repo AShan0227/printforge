@@ -1,0 +1,2707 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PrintForge API",
+    "description": "AI-powered photo to 3D print API",
+    "version": "2.2.0"
+  },
+  "paths": {
+    "/api/generate": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Generate a 3D printable file from an image",
+        "description": "Upload a photo (JPEG/PNG) and receive a watertight 3D mesh file suitable for FDM/SLA printing. Supports 3MF, STL, and OBJ output.",
+        "operationId": "generate_api_generate_post",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "3mf",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "size_mm",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 50.0,
+              "title": "Size Mm"
+            }
+          },
+          {
+            "name": "add_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Add Base"
+            }
+          },
+          {
+            "name": "backend",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "auto",
+              "title": "Backend"
+            }
+          },
+          {
+            "name": "multi_view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Multi View"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_generate_api_generate_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The generated 3D mesh file",
+            "headers": {
+              "X-PrintForge-Vertices": {
+                "description": "Number of vertices",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-PrintForge-Faces": {
+                "description": "Number of faces",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-PrintForge-Watertight": {
+                "description": "Whether mesh is watertight",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-PrintForge-Duration-Ms": {
+                "description": "Pipeline duration in ms",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (not an image)"
+          },
+          "500": {
+            "description": "Pipeline failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/text-to-3d": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Generate a 3D model from a text description",
+        "description": "Provide a text description of the desired object and optionally an image. Returns a 3D mesh file, or a fallback prompt if image generation is unavailable.",
+        "operationId": "text_to_3d_api_text_to_3d_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_text_to_3d_api_text_to_3d_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The generated 3D mesh file, or a JSON fallback response",
+            "content": {
+              "application/octet-stream": {},
+              "application/json": {
+                "example": {
+                  "status": "fallback",
+                  "prompt": "A small dragon figurine...",
+                  "message": "Image generation unavailable. Use the prompt to generate an image manually."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Text-to-3D pipeline failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Analyze an image without generating a mesh",
+        "description": "Upload an image and receive metadata and analysis without running full 3D inference.",
+        "operationId": "analyze_api_analyze_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_analyze_api_analyze_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (not an image)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/optimize": {
+      "post": {
+        "tags": [
+          "Optimization"
+        ],
+        "summary": "Optimize a mesh for 3D printing",
+        "description": "Upload a mesh file and get orientation analysis, material estimates, and printability issue detection for a specific printer.",
+        "operationId": "optimize_api_optimize_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_optimize_api_optimize_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptimizeResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Optimization failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cost": {
+      "post": {
+        "tags": [
+          "Optimization"
+        ],
+        "summary": "Estimate printing cost for a mesh",
+        "description": "Upload a mesh and get a detailed cost breakdown including filament usage, print time, and electricity cost.",
+        "operationId": "cost_estimate_api_cost_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_cost_estimate_api_cost_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Cost estimation failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/split": {
+      "post": {
+        "tags": [
+          "Optimization"
+        ],
+        "summary": "Split a mesh into printer-sized parts",
+        "description": "Upload a mesh that exceeds your build volume and split it into interlocking parts with alignment pins and holes.",
+        "operationId": "split_api_split_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_split_api_split_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SplitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Split operation failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quality": {
+      "post": {
+        "tags": [
+          "Optimization"
+        ],
+        "summary": "Score mesh quality for 3D printing",
+        "description": "Upload a mesh and get a quality score (0-100) with per-metric breakdown.",
+        "operationId": "quality_score_api_quality_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_quality_score_api_quality_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QualityResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Quality scoring failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/repair": {
+      "post": {
+        "tags": [
+          "Optimization"
+        ],
+        "summary": "Repair a broken mesh for 3D printing",
+        "description": "Upload a broken mesh and receive a repaired, watertight version.",
+        "operationId": "repair_mesh_api_repair_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_repair_mesh_api_repair_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The repaired mesh file"
+          },
+          "500": {
+            "description": "Repair failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/batch": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Batch process multiple images to 3D models",
+        "description": "Upload multiple images and receive per-item processing results.",
+        "operationId": "batch_process_api_batch_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_batch_process_api_batch_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Batch processing failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/printers/profiles": {
+      "get": {
+        "tags": [
+          "Printers"
+        ],
+        "summary": "List all supported printer profiles",
+        "description": "Returns detailed specs for all supported printer models.",
+        "operationId": "printer_profiles_api_printers_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/printers": {
+      "get": {
+        "tags": [
+          "Printers"
+        ],
+        "summary": "Discover printers on the local network",
+        "description": "Scan the local network for Bambu Lab printers via SSDP discovery.",
+        "operationId": "discover_printers_api_printers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/printers/send": {
+      "post": {
+        "tags": [
+          "Printers"
+        ],
+        "summary": "Send a print job to a Bambu printer",
+        "description": "Upload a 3MF or gcode file and send it directly to a Bambu Lab printer by IP address.",
+        "operationId": "send_to_printer_api_printers_send_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_send_to_printer_api_printers_send_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterSendResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Printer unreachable"
+          },
+          "500": {
+            "description": "Failed to send print job"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Health check",
+        "description": "Returns service status and version. Use for liveness probes.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/formats": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List supported export formats and printers",
+        "description": "Returns all supported 3D file formats and known printer presets.",
+        "operationId": "list_formats_api_formats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cache/stats": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get image cache statistics",
+        "description": "Returns cache hit/miss counts, total size, and number of cached entries.",
+        "operationId": "cache_stats_api_cache_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/terms": {
+      "get": {
+        "tags": [
+          "Legal"
+        ],
+        "summary": "Get Terms of Service",
+        "description": "Returns the full Terms of Service text.",
+        "operationId": "get_terms_api_terms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/terms/accept": {
+      "get": {
+        "tags": [
+          "Legal"
+        ],
+        "summary": "Confirm TOS acceptance",
+        "description": "Returns a confirmation that TOS acceptance was recorded. Actual tracking is done client-side via localStorage.",
+        "operationId": "accept_terms_api_terms_accept_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/benchmark/latest": {
+      "get": {
+        "tags": [
+          "Benchmark"
+        ],
+        "summary": "Get latest benchmark report",
+        "description": "Returns the most recently saved benchmark report, if any.",
+        "operationId": "benchmark_latest_api_benchmark_latest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkReportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get API info, version, and feature list",
+        "description": "Returns version, supported features, formats, and printers.",
+        "operationId": "api_info_api_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/predict": {
+      "post": {
+        "tags": [
+          "Safety"
+        ],
+        "summary": "Predict print failures for a mesh",
+        "description": "Upload a mesh and get a failure risk score (0-100) with specific risks identified.",
+        "operationId": "predict_failure_api_predict_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_predict_failure_api_predict_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Prediction failure"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get usage analytics summary",
+        "description": "Returns local analytics: generation counts, format/backend breakdowns, average durations.",
+        "operationId": "get_stats_api_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register Endpoint",
+        "description": "Register a new user and get API key.",
+        "operationId": "register_endpoint_api_v2_register_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login Endpoint",
+        "description": "Login and get JWT + API key.",
+        "operationId": "login_endpoint_api_v2_login_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/quota": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Check Quota",
+        "description": "Check remaining quota for an API key.",
+        "operationId": "check_quota_api_v2_quota_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/usage": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Usage History Endpoint",
+        "description": "Get usage history for an API key.",
+        "operationId": "usage_history_endpoint_api_v2_usage_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/usage/monthly": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Monthly Usage Endpoint",
+        "description": "Get this month's usage stats.",
+        "operationId": "monthly_usage_endpoint_api_v2_usage_monthly_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/keys": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Create New Key",
+        "description": "Create an additional API key (requires JWT).",
+        "operationId": "create_new_key_api_v2_keys_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/generate/batch": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Generate Batch",
+        "description": "Submit multiple images for batch async generation. Returns list of task_ids.",
+        "operationId": "generate_batch_api_v2_generate_batch_post",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "stl",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "backend",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "auto",
+              "title": "Backend"
+            }
+          },
+          {
+            "name": "multi_view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Multi View"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_generate_batch_api_v2_generate_batch_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Get Webhooks",
+        "description": "List registered webhooks.",
+        "operationId": "get_webhooks_api_v2_webhooks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Add Webhook",
+        "description": "Register a webhook URL for generation events.",
+        "operationId": "add_webhook_api_v2_webhooks_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Remove Webhook",
+        "description": "Remove a webhook.",
+        "operationId": "remove_webhook_api_v2_webhooks_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/generate/async": {
+      "post": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Generate Async",
+        "description": "Submit async generation job. Returns task_id immediately.",
+        "operationId": "generate_async_api_v2_generate_async_post",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "stl",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "size_mm",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "default": 50.0,
+              "title": "Size Mm"
+            }
+          },
+          {
+            "name": "add_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Add Base"
+            }
+          },
+          {
+            "name": "backend",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "auto",
+              "title": "Backend"
+            }
+          },
+          {
+            "name": "multi_view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Multi View"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_generate_async_api_v2_generate_async_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/generate/{task_id}/status": {
+      "get": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Get Generation Status",
+        "description": "Check async generation task status.",
+        "operationId": "get_generation_status_api_v2_generate__task_id__status_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/generate/{task_id}/result": {
+      "get": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Get Generation Result",
+        "description": "Download result of completed async generation.",
+        "operationId": "get_generation_result_api_v2_generate__task_id__result_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/queue": {
+      "get": {
+        "tags": [
+          "Generation"
+        ],
+        "summary": "Queue Status",
+        "description": "Get async generation queue status.",
+        "operationId": "queue_status_api_v2_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/models": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List User Models",
+        "description": "List generated models for the authenticated user.",
+        "operationId": "list_user_models_api_v2_models_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/models/{model_id}": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get Model Detail",
+        "description": "Get details for a specific generated model.",
+        "operationId": "get_model_detail_api_v2_models__model_id__get",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Delete Model Endpoint",
+        "description": "Delete a generated model.",
+        "operationId": "delete_model_endpoint_api_v2_models__model_id__delete",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/models/{model_id}/download": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Download Model",
+        "description": "Download a generated model file.",
+        "operationId": "download_model_api_v2_models__model_id__download_get",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/stats": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "User Stats",
+        "description": "Get generation stats for the authenticated user.",
+        "operationId": "user_stats_api_v2_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "summary": "Prometheus Metrics",
+        "description": "Prometheus-compatible metrics endpoint.",
+        "operationId": "prometheus_metrics_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/detail": {
+      "get": {
+        "tags": [
+          "Ops"
+        ],
+        "summary": "Health Detail",
+        "description": "Detailed health check with subsystem status.",
+        "operationId": "health_detail_health_detail_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "tags": [
+          "UI"
+        ],
+        "summary": "Dashboard Page",
+        "description": "Admin dashboard with real-time stats.",
+        "operationId": "dashboard_page_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview": {
+      "get": {
+        "tags": [
+          "UI"
+        ],
+        "summary": "Preview Page",
+        "description": "Serve the Three.js 3D preview page.",
+        "operationId": "preview_page_preview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Web Ui",
+        "operationId": "web_ui__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalyzeResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "supported_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Formats"
+          },
+          "default_size_mm": {
+            "type": "number",
+            "title": "Default Size Mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "supported_formats",
+          "default_size_mm"
+        ],
+        "title": "AnalyzeResponse"
+      },
+      "BatchItemResponse": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "success"
+        ],
+        "title": "BatchItemResponse"
+      },
+      "BatchResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "duration_ms": {
+            "type": "number",
+            "title": "Duration Ms"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchItemResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "total",
+          "succeeded",
+          "failed",
+          "duration_ms",
+          "items"
+        ],
+        "title": "BatchResponse"
+      },
+      "BenchmarkReportResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "BenchmarkReportResponse"
+      },
+      "Body_analyze_api_analyze_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_analyze_api_analyze_post"
+      },
+      "Body_batch_process_api_batch_post": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "3mf"
+          },
+          "size_mm": {
+            "type": "number",
+            "title": "Size Mm",
+            "default": 50.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "images"
+        ],
+        "title": "Body_batch_process_api_batch_post"
+      },
+      "Body_cost_estimate_api_cost_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          },
+          "material": {
+            "type": "string",
+            "title": "Material",
+            "default": "PLA"
+          },
+          "infill": {
+            "type": "number",
+            "title": "Infill",
+            "default": 0.15
+          },
+          "layer_height": {
+            "type": "number",
+            "title": "Layer Height",
+            "default": 0.2
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_cost_estimate_api_cost_post"
+      },
+      "Body_generate_api_generate_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_generate_api_generate_post"
+      },
+      "Body_generate_async_api_v2_generate_async_post": {
+        "properties": {
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "title": "Body_generate_async_api_v2_generate_async_post"
+      },
+      "Body_generate_batch_api_v2_generate_batch_post": {
+        "properties": {
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images"
+          }
+        },
+        "type": "object",
+        "required": [
+          "images"
+        ],
+        "title": "Body_generate_batch_api_v2_generate_batch_post"
+      },
+      "Body_optimize_api_optimize_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          },
+          "printer": {
+            "type": "string",
+            "title": "Printer",
+            "default": "bambu-a1"
+          },
+          "infill": {
+            "type": "number",
+            "title": "Infill",
+            "default": 0.15
+          },
+          "layer_height": {
+            "type": "number",
+            "title": "Layer Height",
+            "default": 0.2
+          },
+          "material": {
+            "type": "string",
+            "title": "Material",
+            "default": "pla"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_optimize_api_optimize_post"
+      },
+      "Body_predict_failure_api_predict_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          },
+          "material": {
+            "type": "string",
+            "title": "Material",
+            "default": "PLA"
+          },
+          "layer_height": {
+            "type": "number",
+            "title": "Layer Height",
+            "default": 0.2
+          },
+          "printer": {
+            "type": "string",
+            "title": "Printer",
+            "default": "a1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_predict_failure_api_predict_post"
+      },
+      "Body_quality_score_api_quality_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_quality_score_api_quality_post"
+      },
+      "Body_repair_mesh_api_repair_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_repair_mesh_api_repair_post"
+      },
+      "Body_send_to_printer_api_printers_send_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "printer_ip": {
+            "type": "string",
+            "title": "Printer Ip"
+          },
+          "access_code": {
+            "type": "string",
+            "title": "Access Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "printer_ip",
+          "access_code"
+        ],
+        "title": "Body_send_to_printer_api_printers_send_post"
+      },
+      "Body_split_api_split_post": {
+        "properties": {
+          "mesh_file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Mesh File"
+          },
+          "volume": {
+            "type": "string",
+            "title": "Volume",
+            "default": "256x256x256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mesh_file"
+        ],
+        "title": "Body_split_api_split_post"
+      },
+      "Body_text_to_3d_api_text_to_3d_post": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "3mf"
+          },
+          "size_mm": {
+            "type": "number",
+            "title": "Size Mm",
+            "default": 50.0
+          },
+          "image": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "title": "Body_text_to_3d_api_text_to_3d_post"
+      },
+      "CacheStatsResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "example": "ok"
+          },
+          "hits": {
+            "type": "integer",
+            "title": "Hits",
+            "description": "Number of cache hits since startup"
+          },
+          "misses": {
+            "type": "integer",
+            "title": "Misses",
+            "description": "Number of cache misses since startup"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "description": "Total size of cached files in bytes"
+          },
+          "num_entries": {
+            "type": "integer",
+            "title": "Num Entries",
+            "description": "Number of cached mesh entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "hits",
+          "misses",
+          "size_bytes",
+          "num_entries"
+        ],
+        "title": "CacheStatsResponse"
+      },
+      "CostBreakdown": {
+        "properties": {
+          "filament_grams": {
+            "type": "number",
+            "title": "Filament Grams"
+          },
+          "filament_meters": {
+            "type": "number",
+            "title": "Filament Meters"
+          },
+          "filament_cost_usd": {
+            "type": "number",
+            "title": "Filament Cost Usd"
+          },
+          "print_time_hours": {
+            "type": "number",
+            "title": "Print Time Hours"
+          },
+          "electricity_cost_usd": {
+            "type": "number",
+            "title": "Electricity Cost Usd"
+          },
+          "total_cost_usd": {
+            "type": "number",
+            "title": "Total Cost Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filament_grams",
+          "filament_meters",
+          "filament_cost_usd",
+          "print_time_hours",
+          "electricity_cost_usd",
+          "total_cost_usd"
+        ],
+        "title": "CostBreakdown"
+      },
+      "CostResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "material": {
+            "type": "string",
+            "title": "Material"
+          },
+          "infill_percent": {
+            "type": "number",
+            "title": "Infill Percent"
+          },
+          "layer_height_mm": {
+            "type": "number",
+            "title": "Layer Height Mm"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/CostBreakdown"
+          },
+          "mesh_info": {
+            "$ref": "#/components/schemas/MeshInfo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "material",
+          "infill_percent",
+          "layer_height_mm",
+          "cost",
+          "mesh_info"
+        ],
+        "title": "CostResponse"
+      },
+      "FailureRiskResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "example": "thin_wall"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity",
+            "example": "high"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "example": "Minimum thickness: 0.3mm"
+          },
+          "suggestion": {
+            "type": "string",
+            "title": "Suggestion",
+            "example": "Increase wall thickness to 0.4mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "severity",
+          "location",
+          "suggestion"
+        ],
+        "title": "FailureRiskResponse"
+      },
+      "FormatsResponse": {
+        "properties": {
+          "formats": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Formats"
+          },
+          "printers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Printers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "formats",
+          "printers"
+        ],
+        "title": "FormatsResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "example": "ok"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "example": "1.1.0"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthResponse"
+      },
+      "InfoResponse": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "example": "1.4.0"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "example": "One photo to 3D print"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Features",
+            "example": [
+              "image-to-3d",
+              "text-to-3d"
+            ]
+          },
+          "supported_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Formats",
+            "example": [
+              "3mf",
+              "stl",
+              "obj"
+            ]
+          },
+          "supported_printers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Supported Printers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "description",
+          "features",
+          "supported_formats"
+        ],
+        "title": "InfoResponse"
+      },
+      "MaterialEstimate": {
+        "properties": {
+          "print_time_minutes": {
+            "type": "integer",
+            "title": "Print Time Minutes"
+          },
+          "filament_grams": {
+            "type": "number",
+            "title": "Filament Grams"
+          },
+          "filament_meters": {
+            "type": "number",
+            "title": "Filament Meters"
+          },
+          "layer_count": {
+            "type": "integer",
+            "title": "Layer Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "print_time_minutes",
+          "filament_grams",
+          "filament_meters",
+          "layer_count"
+        ],
+        "title": "MaterialEstimate"
+      },
+      "MeshInfo": {
+        "properties": {
+          "vertices": {
+            "type": "integer",
+            "title": "Vertices"
+          },
+          "faces": {
+            "type": "integer",
+            "title": "Faces"
+          },
+          "is_watertight": {
+            "type": "boolean",
+            "title": "Is Watertight"
+          },
+          "bounding_box_mm": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Bounding Box Mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "vertices",
+          "faces",
+          "is_watertight",
+          "bounding_box_mm"
+        ],
+        "title": "MeshInfo"
+      },
+      "OptimizeResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "printer": {
+            "type": "string",
+            "title": "Printer"
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/OrientationInfo"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/MaterialEstimate"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/PrintIssue"
+            },
+            "type": "array",
+            "title": "Issues"
+          },
+          "mesh_info": {
+            "$ref": "#/components/schemas/MeshInfo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "printer",
+          "orientation",
+          "estimate",
+          "issues",
+          "mesh_info"
+        ],
+        "title": "OptimizeResponse"
+      },
+      "OrientationInfo": {
+        "properties": {
+          "height_mm": {
+            "type": "number",
+            "title": "Height Mm"
+          },
+          "support_estimate_mm3": {
+            "type": "number",
+            "title": "Support Estimate Mm3"
+          },
+          "base_area_mm2": {
+            "type": "number",
+            "title": "Base Area Mm2"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "overhang_percentage": {
+            "type": "number",
+            "title": "Overhang Percentage"
+          },
+          "support_contact_area_mm2": {
+            "type": "number",
+            "title": "Support Contact Area Mm2"
+          }
+        },
+        "type": "object",
+        "required": [
+          "height_mm",
+          "support_estimate_mm3",
+          "base_area_mm2",
+          "score",
+          "overhang_percentage",
+          "support_contact_area_mm2"
+        ],
+        "title": "OrientationInfo"
+      },
+      "PredictResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "example": "ok"
+          },
+          "risk_score": {
+            "type": "number",
+            "title": "Risk Score",
+            "example": 45.0
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level",
+            "example": "medium"
+          },
+          "risks": {
+            "items": {
+              "$ref": "#/components/schemas/FailureRiskResponse"
+            },
+            "type": "array",
+            "title": "Risks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "risk_score",
+          "risk_level"
+        ],
+        "title": "PredictResponse"
+      },
+      "PrintIssue": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "severity",
+          "category",
+          "message"
+        ],
+        "title": "PrintIssue"
+      },
+      "PrinterListResponse": {
+        "properties": {
+          "printers": {
+            "items": {},
+            "type": "array",
+            "title": "Printers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printers"
+        ],
+        "title": "PrinterListResponse"
+      },
+      "PrinterSendResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "PrinterSendResponse"
+      },
+      "QualityResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "total_score": {
+            "type": "number",
+            "title": "Total Score"
+          },
+          "grade": {
+            "type": "string",
+            "title": "Grade"
+          },
+          "watertight": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Watertight"
+          },
+          "face_count": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Face Count"
+          },
+          "aspect_ratio": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Aspect Ratio"
+          },
+          "thin_walls": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Thin Walls"
+          },
+          "overhangs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Overhangs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "total_score",
+          "grade",
+          "watertight",
+          "face_count",
+          "aspect_ratio",
+          "thin_walls",
+          "overhangs"
+        ],
+        "title": "QualityResponse"
+      },
+      "SplitPartInfo": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "has_pins": {
+            "type": "boolean",
+            "title": "Has Pins"
+          },
+          "has_holes": {
+            "type": "boolean",
+            "title": "Has Holes"
+          },
+          "bounding_box": {
+            "title": "Bounding Box"
+          },
+          "file": {
+            "type": "string",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "has_pins",
+          "has_holes",
+          "bounding_box",
+          "file"
+        ],
+        "title": "SplitPartInfo"
+      },
+      "SplitResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "num_parts": {
+            "type": "integer",
+            "title": "Num Parts"
+          },
+          "fits_in_volume": {
+            "type": "boolean",
+            "title": "Fits In Volume"
+          },
+          "split_axes": {
+            "title": "Split Axes"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/SplitPartInfo"
+            },
+            "type": "array",
+            "title": "Parts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "num_parts",
+          "fits_in_volume",
+          "split_axes",
+          "parts"
+        ],
+        "title": "SplitResponse"
+      },
+      "StatsResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "example": "ok"
+          },
+          "total_events": {
+            "type": "integer",
+            "title": "Total Events",
+            "example": 150
+          },
+          "generations": {
+            "type": "integer",
+            "title": "Generations",
+            "example": 42
+          },
+          "formats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Formats"
+          },
+          "backends": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Backends"
+          },
+          "avg_duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Duration Ms"
+          },
+          "avg_quality_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Quality Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "total_events",
+          "generations"
+        ],
+        "title": "StatsResponse"
+      },
+      "TermsResponse": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TermsResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Generation",
+      "description": "Endpoints for generating 3D models from images or text descriptions."
+    },
+    {
+      "name": "Optimization",
+      "description": "Endpoints for analyzing, optimizing, costing, and splitting 3D meshes for printing."
+    },
+    {
+      "name": "Printers",
+      "description": "Endpoints for discovering and sending jobs to Bambu Lab printers."
+    },
+    {
+      "name": "System",
+      "description": "Health checks, supported formats, and cache management."
+    },
+    {
+      "name": "Legal",
+      "description": "Terms of service and acceptance tracking."
+    },
+    {
+      "name": "Benchmark",
+      "description": "Performance benchmarking endpoints."
+    },
+    {
+      "name": "Safety",
+      "description": "Content safety, rate limiting, and failure prediction."
+    },
+    {
+      "name": "Analytics",
+      "description": "Local usage analytics and telemetry."
+    }
+  ]
+}
