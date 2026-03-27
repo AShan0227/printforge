@@ -79,8 +79,9 @@ def _apply_vertex_color(mesh, rgba: Tuple[float, float, float, float]) -> None:
         rgba: RGBA tuple with values in [0, 1].
     """
     import numpy as np
+    import trimesh as _trimesh
 
     n_verts = len(mesh.vertices)
     color_data = np.array(rgba, dtype=np.float32)
-    mesh.visual = trimesh.visual.ColorVisuals()
+    mesh.visual = _trimesh.visual.ColorVisuals()
     mesh.visual.vertex_colors = np.tile(color_data, (n_verts, 1))

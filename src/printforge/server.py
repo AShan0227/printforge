@@ -30,6 +30,7 @@ from .model_store import store_model, list_models, get_model, delete_model, get_
 from .queue import GenerationQueue
 from .rate_limit import generate_limiter, ip_limiter
 from .webhook import register_webhook, unregister_webhook, list_webhooks, fire_event, WebhookEvent
+from .sse import event_bus, emit_generation_started, emit_generation_done, emit_generation_failed
 
 logger = logging.getLogger(__name__)
 
@@ -1404,6 +1405,39 @@ import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
+# ── SSE Events ────────────────────────────────────────────────────────
+
+from starlette.responses import StreamingResponse
+
+@app.get("/api/v2/events", tags=["Events"])
+async def sse_events(request: Request):
+    """Server-Sent Events stream for real-time generation updates.
+    
+    Connect with: curl -N http://localhost:8000/api/v2/events
+    
+    Events: generation.started, generation.progress, generation.done, generation.failed, queue.update
+    """
+    async def event_stream():
+        q = event_bus.subscribe()
+        try:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=30)
+                    yield f"event: {msg['event']}\ndata: {json.dumps(msg['data'])}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            event_bus.unsubscribe(q)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
 # ── Batch Generation ──────────────────────────────────────────────────
 
 @app.post("/api/v2/generate/batch", tags=["Generation"])
@@ -1718,4 +1752,149 @@ def start():
     """Start the web server."""
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# ── Slicing Endpoint ───────────────────────────────────────────────────────────
+
+from pydantic import BaseModel, Field
+from typing import List
+
+
+class SliceResponse(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "ok"})
+    gcode_path: str = Field(..., description="Path to generated G-code file")
+    print_time_seconds: float = Field(..., description="Estimated print time in seconds")
+    print_time_formatted: str = Field(..., description="Human-readable print time")
+    filament_grams: float = Field(..., description="Filament weight in grams")
+    filament_meters: float = Field(..., description="Filament length in meters")
+    layer_count: int = Field(..., description="Number of print layers")
+    slicer_used: str = Field(..., description="Slicer engine used")
+    slicer_version: str = Field(default="", description="Slicer version")
+    hotend_temp_c: int = Field(default=0, description="Hotend temperature in Celsius")
+    bed_temp_c: int = Field(default=0, description="Bed temperature in Celsius")
+    estimated_cost_usd: float = Field(default=0.0, description="Estimated material cost in USD")
+    available_slicers: List[str] = Field(default_factory=list)
+
+
+class SlicerListResponse(BaseModel):
+    slicers: List[dict]
+
+
+@app.get(
+    "/api/v2/slicers",
+    tags=["Printers"],
+    summary="List detected slicers",
+    description="Returns all detected slicer installations (PrusaSlicer, Cura, BambuStudio) with availability status.",
+    response_model=SlicerListResponse,
+)
+async def list_slicers():
+    """List all detected slicer installations."""
+    from .slicer_bridge import detect_slicers
+    detected = detect_slicers()
+    return JSONResponse({
+        "slicers": [
+            {
+                "name": s.name,
+                "version": s.version,
+                "executable": s.executable,
+                "is_available": s.is_available,
+            }
+            for s in detected
+        ]
+    })
+
+
+@app.post(
+    "/api/v2/slice",
+    tags=["Printers"],
+    summary="Slice an STL/3MF file to G-code",
+    description="Upload an STL or 3MF mesh file and generate G-code using a local slicer (PrusaSlicer, Cura, or BambuStudio). Returns print time estimates, material usage, and layer count.",
+    response_model=SliceResponse,
+    responses={
+        200: {"description": "G-code generated successfully"},
+        400: {"description": "Invalid file format"},
+        500: {"description": "Slicing failed"},
+    },
+)
+async def slice_file(
+    mesh_file: UploadFile = File(...),
+    printer: str = Form("bambu_a1"),
+    material: str = Form("pla"),
+    layer_height: float = Form(0.2),
+    infill: float = Form(0.15),
+    support: bool = Form(False),
+    slicer: str = Form("auto"),
+):
+    """Slice an STL/3MF file to G-code."""
+    from .slicer_bridge import (
+        slice_mesh,
+        SliceConfig,
+        detect_slicers,
+        format_duration,
+        MATERIAL_PROFILES,
+    )
+
+    # Validate file type
+    allowed_exts = {".stl", ".3mf", ".obj"}
+    suffix = Path(mesh_file.filename or "model.stl").suffix.lower()
+    if suffix not in allowed_exts:
+        raise HTTPException(400, f"Unsupported file format: {suffix}. Supported: {', '.join(allowed_exts)}")
+
+    # Save uploaded mesh
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        if len(content) > 100 * 1024 * 1024:
+            raise HTTPException(400, "File too large (max 100MB)")
+        tmp.write(content)
+        mesh_path = tmp.name
+
+    # Generate output G-code path
+    output_dir = Path(tempfile.gettempdir()) / "printforge_sliced"
+    output_dir.mkdir(exist_ok=True)
+    output_gcode = str(output_dir / f"{Path(mesh_file.filename).stem}.gcode")
+
+    try:
+        # Build slice config
+        config = SliceConfig(
+            printer_profile=printer,
+            material=material,
+            layer_height=layer_height,
+            infill=infill,
+            support=support,
+        )
+
+        # Run slicing
+        result = slice_mesh(
+            mesh_path=mesh_path,
+            output_gcode=output_gcode,
+            config=config,
+            slicer=slicer,
+        )
+
+        # Get available slicers for response
+        available = [s.name for s in detect_slicers() if s.is_available]
+
+        return JSONResponse({
+            "status": "ok",
+            "gcode_path": result.gcode_path,
+            "print_time_seconds": round(result.print_time_seconds, 1),
+            "print_time_formatted": format_duration(result.print_time_seconds),
+            "filament_grams": round(result.filament_grams, 2),
+            "filament_meters": round(result.filament_meters, 3),
+            "layer_count": result.layer_count,
+            "slicer_used": result.slicer_used,
+            "slicer_version": result.slicer_version,
+            "hotend_temp_c": result.hotend_temp_c,
+            "bed_temp_c": result.bed_temp_c,
+            "estimated_cost_usd": round(result.estimated_cost_usd, 4),
+            "available_slicers": available,
+        })
+    except FileNotFoundError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception("Slicing failed")
+        raise HTTPException(500, f"Slicing failed: {str(e)}")
+    finally:
+        # Clean up temp mesh file
+        Path(mesh_path).unlink(missing_ok=True)
 
