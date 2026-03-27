@@ -1411,6 +1411,101 @@ import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
+# ── Sharing ───────────────────────────────────────────────────────────
+
+@app.post("/api/v2/share", tags=["Sharing"])
+async def create_share_endpoint(request: Request):
+    """Create a public share link for a model."""
+    from .sharing import create_share
+    api_key = request.headers.get("X-API-Key", "")
+    key_obj = validate_api_key(api_key) if api_key else None
+    
+    body = await request.json()
+    model_id = body.get("model_id")
+    if not model_id:
+        raise HTTPException(400, "model_id required")
+    
+    share = create_share(
+        model_id=model_id,
+        user_id=key_obj.user_id if key_obj else "anonymous",
+        title=body.get("title", ""),
+        description=body.get("description", ""),
+    )
+    return JSONResponse({
+        "share_id": share.share_id,
+        "url": f"/s/{share.share_id}",
+        "embed": f'<iframe src="/embed/{share.share_id}" width="600" height="400"></iframe>',
+    })
+
+
+@app.get("/api/v2/gallery", tags=["Sharing"])
+async def public_gallery(limit: int = 20):
+    """List publicly shared models."""
+    from .sharing import list_public_shares
+    return JSONResponse({"models": list_public_shares(limit)})
+
+
+@app.get("/s/{share_id}", tags=["Sharing"])
+async def view_shared_model(share_id: str):
+    """View a shared 3D model (public page)."""
+    from .sharing import get_share
+    share = get_share(share_id)
+    if not share:
+        raise HTTPException(404, "Share not found")
+    
+    # Return preview page with model loaded
+    from .model_store import get_model
+    model = get_model(share.get("model_id", ""))
+    preview_url = ""
+    if model and model.get("output_path"):
+        preview_url = f"/preview?url={model['output_path']}"
+    
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>{share.get('title','3D Model')} — PrintForge</title>
+<meta property="og:title" content="{share.get('title','3D Model')}">
+<meta property="og:description" content="{share.get('description','Generated with PrintForge')}">
+<style>body{{margin:0;background:#0d1117;color:#fff;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;padding:40px}}
+h1{{font-weight:300;margin-bottom:8px}}p{{color:#8b949e}}
+.stats{{display:flex;gap:20px;margin:16px 0;color:#8b949e}}
+iframe{{border:1px solid #30363d;border-radius:8px;margin:20px 0}}</style></head>
+<body>
+<h1>{share.get('title','3D Model')}</h1>
+<p>{share.get('description','')}</p>
+<div class="stats">
+<span>👁 {share.get('views',0)} views</span>
+<span>❤️ {share.get('likes',0)} likes</span>
+<span>⬇️ {share.get('downloads',0)} downloads</span>
+</div>
+<iframe src="/preview" width="800" height="500" allowfullscreen></iframe>
+<p style="margin-top:20px"><a href="/" style="color:#58a6ff">← Back to PrintForge</a></p>
+</body></html>""")
+
+
+@app.get("/embed/{share_id}", tags=["Sharing"])
+async def embed_model(share_id: str):
+    """Embeddable 3D viewer for shared models."""
+    from .sharing import get_share
+    share = get_share(share_id)
+    if not share:
+        raise HTTPException(404, "Share not found")
+    
+    from fastapi.responses import HTMLResponse
+    # Return minimal Three.js preview page
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><title>PrintForge Embed</title>
+<style>*{{margin:0}}body{{background:#0d1117}}</style></head>
+<body><script>window.location='/preview'</script></body></html>""")
+
+
+@app.post("/api/v2/share/{share_id}/like", tags=["Sharing"])
+async def like_endpoint(share_id: str):
+    from .sharing import like_share
+    if not like_share(share_id):
+        raise HTTPException(404, "Share not found")
+    return JSONResponse({"status": "liked"})
+
+
 # ── Materials ─────────────────────────────────────────────────────────
 
 @app.get("/api/v2/materials", tags=["Tools"])
