@@ -423,7 +423,10 @@ class PrintForgePipeline:
             return None
 
     def _infer_local(self, image):
-        """Run inference using local TripoSR model."""
+        """Run inference using local TripoSR model.
+
+        Supports both old API (scene.get_mesh) and new API (model.extract_mesh).
+        """
         try:
             from tsr.system import TSR
             import torch
@@ -450,13 +453,30 @@ class PrintForgePipeline:
                 self._model.to(device)
 
             with torch.no_grad():
-                scene = self._model(image, device=self.config.device)
+                scene_codes = self._model(image, device=self.config.device)
 
-            mesh = scene.get_mesh(resolution=self.config.mc_resolution)
+            # New API: model returns scene_codes tensor, use extract_mesh
+            if hasattr(scene_codes, 'shape') and hasattr(self._model, 'extract_mesh'):
+                meshes = self._model.extract_mesh(
+                    scene_codes, 
+                    resolution=self.config.mc_resolution,
+                    has_vertex_color=False,
+                )
+                raw = meshes[0]
+                verts = raw.vertices.cpu().numpy() if hasattr(raw.vertices, 'cpu') else raw.vertices
+                faces = raw.faces.cpu().numpy() if hasattr(raw.faces, 'cpu') else raw.faces
+                import trimesh
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+            else:
+                # Old API: scene object with get_mesh
+                mesh = scene_codes.get_mesh(resolution=self.config.mc_resolution)
+
             logger.info(f"Local inference OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
             return mesh
         except Exception as e:
             logger.warning(f"Local TripoSR inference failed: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _create_placeholder_mesh(self):
