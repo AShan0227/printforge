@@ -1,17 +1,31 @@
+version: "3.8"
+
 services:
   printforge:
     build: .
+    container_name: printforge
     ports:
       - "8000:8000"
     volumes:
-      - ./output:/app/output
-      - ./web:/app/web
+      - printforge-data:/app/data
+      - printforge-cache:/root/.printforge/cache
+      - ./web:/app/web:ro
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
+      - PRINTFORGE_JWT_SECRET=${PRINTFORGE_JWT_SECRET:-default-change-me}
+      - PRINTFORGE_FEISHU_WEBHOOK=${PRINTFORGE_FEISHU_WEBHOOK:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
-      timeout: 5s
-      start_period: 10s
+      timeout: 10s
       retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 8G  # TripoSR needs ~4-6GB
+
+volumes:
+  printforge-data:
+  printforge-cache:

@@ -1,5 +1,31 @@
+# Generated 3D files
 *.stl
 *.3mf
 *.glb
+*.obj
+
+# Images (except web/ and examples/)
 *.png
 !web/**
+!examples/**
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Data
+data/users.json
+data/api_keys.json
+data/usage.json
+.env
+
+# OS
+.DS_Store
+
+# Cache
+.printforge/
+model_cache/
