@@ -1411,6 +1411,66 @@ import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
 
 
+# ── Mesh Converter ────────────────────────────────────────────────────
+
+@app.post("/api/v2/convert", tags=["Tools"])
+async def convert_endpoint(
+    mesh_file: UploadFile = File(...),
+    target_format: str = "glb",
+    target_faces: int = 0,
+    color: str = "#4CAF50",
+):
+    """Convert mesh between formats (STL/OBJ/3MF/GLB/PLY)."""
+    from .converter import convert_mesh
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_in:
+        content = await mesh_file.read()
+        tmp_in.write(content)
+        input_path = tmp_in.name
+
+    out_suffix = f".{target_format}"
+    with tempfile.NamedTemporaryFile(suffix=out_suffix, delete=False) as tmp_out:
+        output_path = tmp_out.name
+
+    try:
+        stats = convert_mesh(
+            input_path, output_path,
+            target_faces=target_faces if target_faces > 0 else None,
+            color=color,
+        )
+        return FileResponse(
+            output_path,
+            media_type="application/octet-stream",
+            filename=f"converted{out_suffix}",
+            headers={
+                "X-PrintForge-Input-Faces": str(stats["input_faces"]),
+                "X-PrintForge-Output-Faces": str(stats["output_faces"]),
+                "X-PrintForge-Simplified": str(stats["simplified"]),
+            },
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Conversion failed: {e}")
+
+
+@app.post("/api/v2/mesh-info", tags=["Tools"])
+async def mesh_info_endpoint(mesh_file: UploadFile = File(...)):
+    """Get detailed info about a mesh file."""
+    from .converter import get_mesh_info
+
+    suffix = Path(mesh_file.filename or "model.stl").suffix or ".stl"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await mesh_file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        info = get_mesh_info(tmp_path)
+        return JSONResponse(info)
+    except Exception as e:
+        raise HTTPException(500, f"Analysis failed: {e}")
+
+
 # ── SSE Events ────────────────────────────────────────────────────────
 
 from starlette.responses import StreamingResponse

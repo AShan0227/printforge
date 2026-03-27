@@ -564,6 +564,38 @@ def cmd_video(args):
         print("3D inference failed — check logs for details.")
 
 
+def cmd_convert(args):
+    """Convert mesh between formats."""
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    from .converter import convert_mesh
+    stats = convert_mesh(args.input, args.output, 
+                         target_faces=args.faces if args.faces > 0 else None,
+                         color=args.color)
+    print(f"✅ Converted: {stats['input_format']} → {stats['output_format']}")
+    print(f"   Faces: {stats['input_faces']} → {stats['output_faces']}")
+    print(f"   Size: {stats['output_size_bytes']} bytes")
+    if stats['simplified']:
+        print(f"   Simplified: yes")
+
+
+def cmd_info(args):
+    """Show mesh file information."""
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    from .converter import get_mesh_info
+    info = get_mesh_info(args.mesh)
+    print(f"Format: {info['format']}")
+    print(f"Vertices: {info['vertices']:,}")
+    print(f"Faces: {info['faces']:,}")
+    print(f"Watertight: {'✅' if info['is_watertight'] else '❌'}")
+    if info['volume_cm3'] is not None:
+        print(f"Volume: {info['volume_cm3']} cm³")
+    print(f"Surface area: {info['surface_area_cm2']} cm²")
+    print(f"Bounding box: {info['bounding_box_mm']} mm")
+    print(f"File size: {info['file_size_bytes']:,} bytes")
+
+
 def cmd_serve(args):
     """Start the PrintForge API server."""
     if args.verbose:
@@ -745,6 +777,21 @@ def main():
     p_printers = subparsers.add_parser("printers", help="List all supported printer profiles")
     p_printers.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_printers.set_defaults(func=cmd_printers)
+
+    # ── printforge convert ─────────────────────────────────────────
+    p_convert = subparsers.add_parser("convert", help="Convert mesh between formats")
+    p_convert.add_argument("input", help="Input mesh file")
+    p_convert.add_argument("-o", "--output", required=True, help="Output file path")
+    p_convert.add_argument("--faces", type=int, default=0, help="Simplify to N faces (0=no simplify)")
+    p_convert.add_argument("--color", default="#4CAF50", help="Color for GLB export")
+    p_convert.add_argument("-v", "--verbose", action="store_true")
+    p_convert.set_defaults(func=cmd_convert)
+
+    # ── printforge info ────────────────────────────────────────────
+    p_info_mesh = subparsers.add_parser("info", help="Show mesh file information")
+    p_info_mesh.add_argument("mesh", help="Mesh file to analyze")
+    p_info_mesh.add_argument("-v", "--verbose", action="store_true")
+    p_info_mesh.set_defaults(func=cmd_info)
 
     # ── printforge serve ──────────────────────────────────────────
     p_serve = subparsers.add_parser("serve", help="Start the PrintForge API server")

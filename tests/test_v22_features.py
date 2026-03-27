@@ -119,3 +119,45 @@ class TestSDK:
         pf = PrintForge(api_key="pf_test", base_url="http://localhost:8000")
         assert pf.api_key == "pf_test"
         assert pf.base_url == "http://localhost:8000"
+
+
+class TestConverter:
+    def test_convert_stl_to_obj(self, tmp_path):
+        import trimesh
+        from printforge.converter import convert_mesh
+        
+        # Create test STL
+        mesh = trimesh.creation.box(extents=[10, 10, 10])
+        stl_path = str(tmp_path / "test.stl")
+        mesh.export(stl_path)
+        
+        obj_path = str(tmp_path / "test.obj")
+        stats = convert_mesh(stl_path, obj_path)
+        assert stats["input_format"] == "stl"
+        assert stats["output_format"] == "obj"
+        assert os.path.exists(obj_path)
+
+    def test_simplify(self, tmp_path):
+        import trimesh
+        from printforge.converter import convert_mesh
+        
+        mesh = trimesh.creation.icosphere(subdivisions=3)
+        stl_path = str(tmp_path / "dense.stl")
+        mesh.export(stl_path)
+        
+        out_path = str(tmp_path / "simple.stl")
+        stats = convert_mesh(stl_path, out_path, target_faces=100)
+        assert stats["output_faces"] <= stats["input_faces"]
+
+    def test_mesh_info(self, tmp_path):
+        import trimesh
+        from printforge.converter import get_mesh_info
+        
+        mesh = trimesh.creation.box(extents=[10, 20, 30])
+        path = str(tmp_path / "box.stl")
+        mesh.export(path)
+        
+        info = get_mesh_info(path)
+        assert info["vertices"] > 0
+        assert info["faces"] > 0
+        assert info["format"] == "stl"
