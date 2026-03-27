@@ -658,15 +658,17 @@ class PrintForgePipeline:
     def _export(self, mesh, output_path: str):
         """Export mesh in the configured format."""
         output_path = Path(output_path)
-        
+
         if self.config.output_format == "3mf" or output_path.suffix == ".3mf":
             # 3MF export
             try:
                 mesh.export(str(output_path), file_type="3mf")
             except Exception:
-                # Fallback to STL if 3MF export fails
                 stl_path = output_path.with_suffix(".stl")
                 mesh.export(str(stl_path), file_type="stl")
                 logger.warning(f"3MF export failed, saved as STL: {stl_path}")
+        elif self.config.output_format == "glb" or output_path.suffix == ".glb":
+            from .export_glb import export_glb
+            export_glb(mesh, str(output_path))
         else:
             mesh.export(str(output_path), file_type="stl")

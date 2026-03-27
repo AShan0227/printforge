@@ -392,7 +392,8 @@ async def generate(
         tmp_in.write(content)
         input_path = tmp_in.name
 
-    output_suffix = ".3mf" if format == "3mf" else ".stl"
+    format_map = {"3mf": ".3mf", "stl": ".stl", "obj": ".obj", "glb": ".glb"}
+    output_suffix = format_map.get(format, ".stl")
     with tempfile.NamedTemporaryFile(suffix=output_suffix, delete=False) as tmp_out:
         output_path = tmp_out.name
 
@@ -1401,6 +1402,51 @@ async def create_new_key(request: Request):
 
 import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+
+# ── Batch Generation ──────────────────────────────────────────────────
+
+@app.post("/api/v2/generate/batch", tags=["Generation"])
+async def generate_batch(
+    request: Request,
+    images: List[UploadFile] = File(...),
+    format: str = "stl",
+    backend: str = "auto",
+    multi_view: bool = False,
+):
+    """Submit multiple images for batch async generation. Returns list of task_ids."""
+    api_key_raw = request.headers.get("X-API-Key", "")
+    api_key_obj = validate_api_key(api_key_raw) if api_key_raw else None
+
+    if len(images) > 20:
+        raise HTTPException(400, "Maximum 20 images per batch")
+
+    queue = GenerationQueue()
+    await queue.ensure_workers()
+
+    task_ids = []
+    for img in images:
+        suffix = Path(img.filename or "upload.jpg").suffix or ".jpg"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            content = await img.read()
+            tmp.write(content)
+            input_path = tmp.name
+
+        task_id = queue.submit(
+            image_path=input_path,
+            output_format=format,
+            backend=backend,
+            multi_view=multi_view,
+            user_id=api_key_obj.user_id if api_key_obj else "anonymous",
+            api_key=api_key_raw,
+        )
+        task_ids.append(task_id)
+
+    return JSONResponse({
+        "task_ids": task_ids,
+        "count": len(task_ids),
+        "queue_size": queue.queue_size,
+    })
 
 
 # ── Webhooks ──────────────────────────────────────────────────────────
