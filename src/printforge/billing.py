@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
-from .api_v2 import verify_api_key, increment_usage, get_quota_status
+from .api_v2 import validate_api_key, increment_usage, get_key_stats
 
 BILLING_DIR = Path.home() / ".openclaw" / "workspace" / "data" / "printforge"
 BILLING_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,7 @@ class UsageRecord:
 
 def record_usage(raw_key: str, operation: str, success: bool, duration_ms: int, model_used: str = "unknown"):
     """Record a generation event."""
-    key = verify_api_key(raw_key)
+    key = validate_api_key(raw_key)
     if not key:
         return
 
@@ -59,7 +59,7 @@ def record_usage(raw_key: str, operation: str, success: bool, duration_ms: int, 
 
 def get_usage_history(raw_key: str, limit: int = 50) -> list:
     """Get recent usage history for a key."""
-    key = verify_api_key(raw_key)
+    key = validate_api_key(raw_key)
     if not key:
         return []
     
@@ -70,7 +70,7 @@ def get_usage_history(raw_key: str, limit: int = 50) -> list:
 
 def get_monthly_usage(raw_key: str) -> Dict:
     """Get this month's usage statistics."""
-    key = verify_api_key(raw_key)
+    key = validate_api_key(raw_key)
     if not key:
         return {}
     

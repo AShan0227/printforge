@@ -1,0 +1,8 @@
+# 动漫角色文字描述测试用例
+
+1. "a cute chibi anime girl with pink hair, big eyes, holding a magic wand, white background, flat illustration style"
+2. "a small yellow minion-like character with goggles, blue overalls, simple cartoon style, white background, flat design"
+3. "a cute anime rabbit character with long ears, pastel colors, holding a carrot, simple flat illustration"
+4. "a chibi anime boy with blue hair, hero cape, confident pose, white background, vector art style"
+5. "a small robot character with square head, antenna, red eyes, simple design, white background"
+

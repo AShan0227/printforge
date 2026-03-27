@@ -21,6 +21,9 @@ from .print_optimizer import PrintOptimizer, PRINTER_PRESETS
 from .formats import SUPPORTED_FORMATS
 from .cache import ImageCache
 from .safety import RateLimiter
+from .api_v2 import register_user as api_register_user, create_api_key, validate_api_key, increment_usage, get_key_stats, decode_jwt, _make_jwt, login_user
+from .billing import record_usage, get_usage_history, get_monthly_usage
+from .feishu_notifier import send_notification, GenerationResult
 
 logger = logging.getLogger(__name__)
 
@@ -1237,6 +1240,114 @@ async def ws_progress(websocket: WebSocket):
             await websocket.close()
         except Exception:
             pass
+
+
+# ── API v2: Auth & Billing ──────────────────────────────────────────
+
+@app.post("/api/v2/register", tags=["Auth"])
+async def register_endpoint(request: Request):
+    """Register a new user and get API key."""
+    body = await request.json()
+    username = body.get("username")
+    password = body.get("password")
+    email = body.get("email", "")
+    if not username or not password:
+        raise HTTPException(400, "username and password required")
+    
+    user, raw_key = api_register_user(username, password, email)
+    token = _make_jwt(user.user_id, username)
+    
+    return JSONResponse({
+        "status": "ok",
+        "user_id": user.user_id,
+        "api_key": raw_key,
+        "jwt_token": token,
+        "message": "Save your API key — it won't be shown again.",
+    })
+
+
+@app.post("/api/v2/login", tags=["Auth"])
+async def login_endpoint(request: Request):
+    """Login and get JWT + API key."""
+    body = await request.json()
+    username = body.get("username")
+    password = body.get("password")
+    if not username or not password:
+        raise HTTPException(400, "username and password required")
+    
+    result = login_user(username, password)
+    if not result:
+        raise HTTPException(401, "Invalid credentials")
+    
+    user, token, api_key = result
+    return JSONResponse({
+        "user_id": user.user_id,
+        "jwt_token": token,
+        "api_key": api_key,
+    })
+
+
+@app.get("/api/v2/quota", tags=["Auth"])
+async def check_quota(request: Request):
+    """Check remaining quota for an API key."""
+    api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key header or api_key param required")
+    stats = get_key_stats(api_key)
+    if not stats:
+        raise HTTPException(401, "Invalid API key")
+    return JSONResponse(stats)
+
+
+@app.get("/api/v2/usage", tags=["Billing"])
+async def usage_history_endpoint(request: Request, limit: int = 50):
+    """Get usage history for an API key."""
+    api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key header required")
+    return JSONResponse({"usage": get_usage_history(api_key, limit)})
+
+
+@app.get("/api/v2/usage/monthly", tags=["Billing"])
+async def monthly_usage_endpoint(request: Request):
+    """Get this month's usage stats."""
+    api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key header required")
+    return JSONResponse(get_monthly_usage(api_key))
+
+
+@app.post("/api/v2/keys", tags=["Auth"])
+async def create_new_key(request: Request):
+    """Create an additional API key (requires JWT)."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Bearer token required")
+    
+    payload = decode_jwt(auth[7:])
+    if not payload:
+        raise HTTPException(401, "Invalid or expired token")
+    
+    raw_key = create_api_key(payload["sub"])
+    return JSONResponse({
+        "api_key": raw_key,
+        "message": "Save your API key — it won't be shown again.",
+    })
+
+
+# ── 3D Preview route ────────────────────────────────────────────────
+
+_web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+@app.get("/preview", tags=["UI"])
+async def preview_page():
+    """Serve the Three.js 3D preview page."""
+    preview_path = os.path.join(_web_dir, "preview.html") if os.path.isdir(_web_dir) else None
+    if preview_path and os.path.exists(preview_path):
+        from fastapi.responses import HTMLResponse
+        with open(preview_path) as f:
+            return HTMLResponse(f.read())
+    raise HTTPException(404, "Preview page not found")
 
 
 # ── Static files & startup ─────────────────────────────────────────

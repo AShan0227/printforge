@@ -10,6 +10,8 @@ requests
 fastapi
 uvicorn
 python-multipart
+scikit-image
+gradio_client
 
 [bg]
 rembg
@@ -17,6 +19,7 @@ rembg
 [dev]
 pytest
 ruff
+httpx
 
 [ws]
 websockets
