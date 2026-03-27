@@ -26,6 +26,7 @@ from .billing import record_usage, get_usage_history, get_monthly_usage
 from .feishu_notifier import send_notification, GenerationResult
 from .metrics import get_metrics
 from .health import get_health_checker
+from .model_store import store_model, list_models, get_model, delete_model, get_user_stats
 
 logger = logging.getLogger(__name__)
 
@@ -403,12 +404,30 @@ async def generate(
         pipeline = PrintForgePipeline(config)
         result = pipeline.run(input_path, output_path)
 
-        # Record billing if API key was provided
+        # Record billing and store model
+        user_id = api_key_obj.user_id if api_key_obj else "anonymous"
         if api_key_raw and api_key_obj:
             try:
                 record_usage(api_key_raw, "generate_3d", True, int(result.duration_ms), backend)
             except Exception as billing_err:
                 logger.warning(f"Billing record failed: {billing_err}")
+
+        try:
+            stored = store_model(
+                user_id=user_id,
+                input_filename=image.filename or "upload.png",
+                output_path=output_path,
+                output_format=format,
+                vertices=result.vertices,
+                faces=result.faces,
+                is_watertight=result.is_watertight,
+                duration_ms=int(result.duration_ms),
+                backend=backend,
+                multi_view=multi_view,
+            )
+            logger.info(f"Model stored: {stored.model_id}")
+        except Exception as store_err:
+            logger.warning(f"Model store failed: {store_err}")
 
         # Send Feishu notification (async, best-effort)
         try:
@@ -1379,6 +1398,72 @@ async def create_new_key(request: Request):
 
 import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+
+# ── Model Management ──────────────────────────────────────────────────
+
+@app.get("/api/v2/models", tags=["Models"])
+async def list_user_models(request: Request, limit: int = 50):
+    """List generated models for the authenticated user."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        # No auth — return all models
+        return JSONResponse({"models": list_models(limit=limit)})
+    
+    key_obj = validate_api_key(api_key)
+    if not key_obj:
+        raise HTTPException(401, "Invalid API key")
+    
+    return JSONResponse({"models": list_models(user_id=key_obj.user_id, limit=limit)})
+
+
+@app.get("/api/v2/models/{model_id}", tags=["Models"])
+async def get_model_detail(model_id: str):
+    """Get details for a specific generated model."""
+    model = get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    return JSONResponse(model)
+
+
+@app.get("/api/v2/models/{model_id}/download", tags=["Models"])
+async def download_model(model_id: str):
+    """Download a generated model file."""
+    model = get_model(model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    
+    path = model.get("output_path", "")
+    if not path or not Path(path).exists():
+        raise HTTPException(404, "Model file not found on disk")
+    
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=f"{model_id}.{model.get('output_format', 'stl')}",
+    )
+
+
+@app.delete("/api/v2/models/{model_id}", tags=["Models"])
+async def delete_model_endpoint(model_id: str, request: Request):
+    """Delete a generated model."""
+    if not delete_model(model_id):
+        raise HTTPException(404, "Model not found")
+    return JSONResponse({"status": "deleted", "model_id": model_id})
+
+
+@app.get("/api/v2/stats", tags=["Models"])
+async def user_stats(request: Request):
+    """Get generation stats for the authenticated user."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        raise HTTPException(401, "X-API-Key required")
+    
+    key_obj = validate_api_key(api_key)
+    if not key_obj:
+        raise HTTPException(401, "Invalid API key")
+    
+    return JSONResponse(get_user_stats(key_obj.user_id))
 
 
 # ── Metrics & Health ─────────────────────────────────────────────────
