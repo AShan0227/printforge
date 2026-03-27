@@ -15,6 +15,16 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+def _get_hf_token() -> Optional[str]:
+    """Get HuggingFace token from env or ~/.openclaw/workspace/.hf_token file."""
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        return token
+    token_file = Path.home() / ".openclaw" / "workspace" / ".hf_token"
+    if token_file.exists():
+        return token_file.read_text().strip()
+    return None
+
 import numpy as np
 import requests
 
@@ -309,10 +319,10 @@ class PrintForgePipeline:
             back_path = _save_temp(views["back"])
             left_path = _save_temp(views["left"])
 
-            hf_token = os.environ.get("HF_TOKEN")
+            hf_token = _get_hf_token()
             if hf_token:
                 logger.info("Using authenticated HF access (increased ZeroGPU quota)")
-                client = Client("Tencent/Hunyuan3D-2", hf_token=hf_token)
+                client = Client("Tencent/Hunyuan3D-2", token=hf_token)
             else:
                 logger.info("No HF_TOKEN set — using anonymous access (limited quota)")
                 client = Client("Tencent/Hunyuan3D-2")
@@ -358,10 +368,10 @@ class PrintForgePipeline:
                 image.save(tmp, format="PNG")
                 temp_path = tmp.name
 
-            hf_token = os.environ.get("HF_TOKEN")
+            hf_token = _get_hf_token()
             if hf_token:
                 logger.info("Using authenticated HF access for Hunyuan3D-2mini")
-                client = Client("Tencent/Hunyuan3D-2mini", hf_token=hf_token)
+                client = Client("Tencent/Hunyuan3D-2mini", token=hf_token)
             else:
                 logger.info("No HF_TOKEN set — using anonymous access for Hunyuan3D-2mini")
                 client = Client("Tencent/Hunyuan3D-2mini")
@@ -384,7 +394,7 @@ class PrintForgePipeline:
 
     def _infer_hf_api(self, image):
         """Run inference via HuggingFace Inference API."""
-        hf_token = os.environ.get("HF_TOKEN")
+        hf_token = _get_hf_token()
         if not hf_token:
             logger.info("HF_TOKEN not set — skipping HuggingFace API backend")
             return None
