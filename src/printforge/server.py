@@ -272,7 +272,7 @@ app = FastAPI(
     title="PrintForge",
     description="One photo to 3D print — commercial API. Upload an image and receive a watertight, "
                 "print-ready 3D model in 3MF/STL/OBJ format.",
-    version="1.4.0",
+    version="2.2.0",
     openapi_tags=tags_metadata,
 )
 
@@ -282,6 +282,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# v2.2 middleware
+from .middleware import RequestLoggingMiddleware, RateLimitMiddleware, ErrorHandlerMiddleware
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(ErrorHandlerMiddleware)
 
 
 @app.middleware("http")
