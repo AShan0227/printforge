@@ -24,6 +24,8 @@ from .safety import RateLimiter
 from .api_v2 import register_user as api_register_user, create_api_key, validate_api_key, increment_usage, get_key_stats, decode_jwt, _make_jwt, login_user
 from .billing import record_usage, get_usage_history, get_monthly_usage
 from .feishu_notifier import send_notification, GenerationResult
+from .metrics import get_metrics
+from .health import get_health_checker
 
 logger = logging.getLogger(__name__)
 
@@ -1377,6 +1379,25 @@ async def create_new_key(request: Request):
 
 import os
 _web_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web")
+
+
+# ── Metrics & Health ─────────────────────────────────────────────────
+
+@app.get("/metrics", tags=["Ops"])
+async def prometheus_metrics():
+    """Prometheus-compatible metrics endpoint."""
+    m = get_metrics()
+    return Response(
+        content=m.get_metrics_text(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/health/detail", tags=["Ops"])
+async def health_detail():
+    """Detailed health check with subsystem status."""
+    checker = get_health_checker()
+    return JSONResponse(checker.check_all())
 
 
 # ── 3D Preview route ────────────────────────────────────────────────
