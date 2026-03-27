@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "printforge"
-version = "2.0.0"
-description = "One photo to 3D print. Open-source, local, print-optimized."
+version = "2.2.0"
+description = "AI-powered photo to 3D print. Multi-view inference, API auth, real-time preview."
 requires-python = ">=3.9"
 license = {text = "MIT"}
 dependencies = [
@@ -27,8 +27,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "httpx"]
-bg = ["rembg"]
+bg = ["rembg[cpu]"]
 ws = ["websockets"]
+auth = ["pyjwt"]
+local = ["transformers", "omegaconf", "einops"]
+all = ["printforge[bg,ws,auth,local]"]
 
 [project.scripts]
 printforge = "printforge.cli:main"
