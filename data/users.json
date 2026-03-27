@@ -16,5 +16,23 @@
         "is_active": true
       }
     ]
+  },
+  "u_YlcGkecfCpK48RxK_8vRuw": {
+    "user_id": "u_YlcGkecfCpK48RxK_8vRuw",
+    "username": "demo",
+    "password_hash": "05f6a12af03c199993cc425138696e450519c917d988d8a35eb3a60f2598c5a9$a34794230f9d1069281f2d9f3fb041e5",
+    "email": "demo@test.com",
+    "created_at": 1774594907.4489,
+    "api_keys": [
+      {
+        "key": "pf_5uOyKeEFUqmYPl7v_sZu85FIoJtYNvEQhAMX8_Wobyw",
+        "user_id": "u_YlcGkecfCpK48RxK_8vRuw",
+        "name": "Default Key",
+        "created_at": 1774594907.4489028,
+        "generation_count": 0,
+        "quota_limit": 100,
+        "is_active": true
+      }
+    ]
   }
 }

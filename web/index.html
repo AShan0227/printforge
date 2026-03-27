@@ -737,10 +737,11 @@
 
     // ---- Init ----
     (function initOnboarding() {
-        showOnboarding();
-        if (localStorage.getItem('pf-onboarded')) {
-            checkTOS();
-        }
+        // Skip onboarding and TOS — go straight to app
+        document.getElementById('onboarding-overlay')?.classList.add('hidden');
+        document.getElementById('tos-banner')?.classList.add('hidden');
+        localStorage.setItem('pf-onboarded', '1');
+        localStorage.setItem('pf-tos-accepted', '1');
     })();
     </script>
 </body>
