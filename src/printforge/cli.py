@@ -564,6 +564,32 @@ def cmd_video(args):
         print("3D inference failed — check logs for details.")
 
 
+def cmd_serve(args):
+    """Start the PrintForge API server."""
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    import uvicorn
+    print(f"Starting PrintForge server on {args.host}:{args.port}")
+    print(f"API docs: http://{args.host}:{args.port}/docs")
+    print(f"3D Preview: http://{args.host}:{args.port}/preview")
+    print(f"Health: http://{args.host}:{args.port}/health")
+    print(f"Metrics: http://{args.host}:{args.port}/metrics")
+    uvicorn.run("printforge.server:app", host=args.host, port=args.port, reload=False)
+
+
+def cmd_register(args):
+    """Register a new user and get API key."""
+    from .api_v2 import register_user
+    user, raw_key = register_user(args.username, args.password, args.email)
+    print(f"✅ User registered: {user.username} ({user.user_id})")
+    print(f"🔑 API Key: {raw_key}")
+    print(f"⚠️  Save this key — it won't be shown again.")
+    print(f"\nUsage:")
+    print(f'  curl -X POST http://localhost:8000/api/generate \\')
+    print(f'    -H "X-API-Key: {raw_key}" \\')
+    print(f'    -F "image=@photo.png"')
+
+
 def cmd_printers(args):
     """List all supported printer profiles."""
     _setup_logging(args.verbose)
@@ -719,6 +745,20 @@ def main():
     p_printers = subparsers.add_parser("printers", help="List all supported printer profiles")
     p_printers.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_printers.set_defaults(func=cmd_printers)
+
+    # ── printforge serve ──────────────────────────────────────────
+    p_serve = subparsers.add_parser("serve", help="Start the PrintForge API server")
+    p_serve.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    p_serve.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    p_serve.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+    p_serve.set_defaults(func=cmd_serve)
+
+    # ── printforge register ───────────────────────────────────────
+    p_reg = subparsers.add_parser("register", help="Register a new user and get API key")
+    p_reg.add_argument("username", help="Username")
+    p_reg.add_argument("--email", default="", help="Email address")
+    p_reg.add_argument("--password", default="changeme", help="Password")
+    p_reg.set_defaults(func=cmd_register)
 
     # ── Legacy: printforge <image> (backward compat) ────────────────
     args = parser.parse_args()
