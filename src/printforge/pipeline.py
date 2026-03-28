@@ -175,33 +175,50 @@ class PrintForgePipeline:
             raw_mesh = self._infer_3d(image)
             stages["inference"] = time.time() - t0
         
-        # Stage 3: SDF conversion → watertight mesh
-        logger.info("Stage 3: SDF watertight conversion...")
-        _progress("watertight", 0.50)
-        t0 = time.time()
-        watertight_mesh = self._make_watertight(raw_mesh)
-        stages["watertight"] = time.time() - t0
+        # Stage 3: Watertight conversion
+        # High-quality API outputs (Tripo, TRELLIS) should NOT be voxel-rebuilt
+        # — it destroys geometry detail. Only do light repair.
+        is_api_backend = self.config.inference_backend in ("tripo", "trellis", "auto")
+        is_high_quality = raw_mesh is not None and len(raw_mesh.vertices) > 5000
 
-        # Stage 3.5: Tail detection & removal
-        logger.info("Stage 3.5: Tail detection & removal...")
-        _progress("tail_removal", 0.62)
-        t0 = time.time()
-        tail_result = remove_tail(watertight_mesh)
-        stages["tail_removal"] = time.time() - t0
-        if tail_result.tail_detected:
-            tail_warn = (
-                f"Tail detected along {tail_result.tail_direction}: "
-                f"{tail_result.removed_percentage*100:.1f}% vertices removed"
-            )
-            logger.warning(tail_warn)
-            warnings.append(tail_warn)
-            watertight_mesh = trimesh.Trimesh(
-                vertices=tail_result.cleaned_verts,
-                faces=watertight_mesh.faces,
-            )
+        if is_api_backend and is_high_quality:
+            logger.info("Stage 3: Light mesh repair (preserving API geometry)...")
+            _progress("watertight", 0.50)
+            t0 = time.time()
+            watertight_mesh = self._light_repair(raw_mesh)
+            stages["watertight"] = time.time() - t0
+        else:
+            logger.info("Stage 3: SDF watertight conversion...")
+            _progress("watertight", 0.50)
+            t0 = time.time()
+            watertight_mesh = self._make_watertight(raw_mesh)
+            stages["watertight"] = time.time() - t0
 
-        # Stage 3.7: Depth-guided enhancement
-        if self.config.use_depth and self.config.inference_backend != "placeholder":
+        # Stage 3.5: Tail detection & removal (skip for high-quality API output)
+        if not (is_api_backend and is_high_quality):
+            logger.info("Stage 3.5: Tail detection & removal...")
+            _progress("tail_removal", 0.62)
+            t0 = time.time()
+            tail_result = remove_tail(watertight_mesh)
+            stages["tail_removal"] = time.time() - t0
+            if tail_result.tail_detected:
+                tail_warn = (
+                    f"Tail detected along {tail_result.tail_direction}: "
+                    f"{tail_result.removed_percentage*100:.1f}% vertices removed"
+                )
+                logger.warning(tail_warn)
+                warnings.append(tail_warn)
+                watertight_mesh = trimesh.Trimesh(
+                    vertices=tail_result.cleaned_verts,
+                    faces=watertight_mesh.faces,
+                )
+        else:
+            logger.info("Stage 3.5: Skipping tail removal (high-quality API output)")
+            _progress("tail_removal", 0.62)
+            stages["tail_removal"] = 0.0
+
+        # Stage 3.7: Depth-guided enhancement (skip for high-quality API output)
+        if self.config.use_depth and not (is_api_backend and is_high_quality):
             logger.info("Stage 3.7: Depth-guided mesh enhancement...")
             _progress("depth_enhance", 0.65)
             t0 = time.time()
@@ -734,9 +751,25 @@ class PrintForgePipeline:
             glb_resp = requests.get(model_url, timeout=60)
             glb_resp.raise_for_status()
 
-            mesh = trimesh.load(io.BytesIO(glb_resp.content), file_type="glb", force="mesh")
+            # Load preserving texture — try Scene first, extract mesh with visual
+            loaded = trimesh.load(io.BytesIO(glb_resp.content), file_type="glb")
+            if isinstance(loaded, trimesh.Scene):
+                meshes = [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                if meshes:
+                    mesh = meshes[0]  # Primary mesh with texture
+                    if len(meshes) > 1:
+                        # Concatenate but keep first mesh's visual
+                        visual = mesh.visual
+                        mesh = trimesh.util.concatenate(meshes)
+                        mesh.visual = visual
+                else:
+                    mesh = trimesh.load(io.BytesIO(glb_resp.content), file_type="glb", force="mesh")
+            else:
+                mesh = loaded
+
             logger.info(
-                f"Tripo API OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces"
+                f"Tripo API OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces, "
+                f"visual={mesh.visual.kind if hasattr(mesh.visual, 'kind') else 'none'}"
             )
             return mesh
 
@@ -1054,6 +1087,45 @@ class PrintForgePipeline:
         )
 
         return enhanced_mesh, warnings
+
+    def _light_repair(self, mesh):
+        """Light mesh repair that preserves original geometry.
+
+        For high-quality API outputs (Tripo, TRELLIS), voxel-based watertight
+        conversion destroys detail. Instead, do minimal fixes:
+        - Fix normals
+        - Fill small holes
+        - Remove degenerate faces
+        Does NOT rebuid geometry via marching cubes.
+        """
+        import trimesh
+
+        logger.info(f"Light repair: {len(mesh.vertices)} verts, watertight={mesh.is_watertight}")
+
+        # Save original visual before any repair
+        original_visual = mesh.visual.copy() if hasattr(mesh.visual, 'copy') else mesh.visual
+
+        # Fix normals
+        trimesh.repair.fix_normals(mesh)
+        trimesh.repair.fix_inversion(mesh)
+
+        # Fill holes
+        trimesh.repair.fill_holes(mesh)
+
+        # Restore visual if repair destroyed it
+        if (hasattr(original_visual, 'kind') and original_visual.kind == 'texture'
+                and (not hasattr(mesh.visual, 'kind') or mesh.visual.kind != 'texture')):
+            try:
+                mesh.visual = original_visual
+                logger.info("Restored texture visual after repair")
+            except Exception:
+                pass
+
+        logger.info(
+            f"Light repair done: {len(mesh.vertices)} verts, {len(mesh.faces)} faces, "
+            f"watertight={mesh.is_watertight}"
+        )
+        return mesh
 
     def _optimize_for_print(self, mesh):
         """Optimize mesh for 3D printing."""

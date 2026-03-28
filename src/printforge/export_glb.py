@@ -38,12 +38,26 @@ def export_glb(
     # Fix normals before export
     trimesh.repair.fix_normals(mesh)
 
-    # Apply color if provided
-    if color is not None:
+    # Only apply color if mesh has no existing texture/material
+    has_texture = (
+        hasattr(mesh, 'visual') and mesh.visual is not None
+        and hasattr(mesh.visual, 'kind') and mesh.visual.kind == 'texture'
+    )
+    has_vertex_colors = (
+        hasattr(mesh, 'visual') and mesh.visual is not None
+        and hasattr(mesh.visual, 'vertex_colors')
+        and mesh.visual.vertex_colors is not None
+        and len(mesh.visual.vertex_colors) > 0
+    )
+
+    if has_texture or has_vertex_colors:
+        # Preserve existing visual (PBR texture from Tripo, vertex colors, etc.)
+        logger.info("Preserving existing mesh visual/texture for GLB export")
+    elif color is not None:
         rgba = _hex_to_rgba(color)
         _apply_vertex_color(mesh, rgba)
     else:
-        # Default neutral gray
+        # Default neutral gray only when no visual exists
         _apply_vertex_color(mesh, (0.8, 0.8, 0.8, 1.0))
 
     mesh.export(output_path, file_type="glb")
