@@ -66,6 +66,10 @@ class PipelineConfig:
     multi_view: bool = False  # Generate multiple views for better reconstruction
     multi_view_count: int = 4  # front/back/left/right
 
+    # Texture
+    apply_texture: bool = False  # Apply image colors to mesh
+    texture_method: str = "projection"  # "projection" or "nearest"
+
     # Output
     output_format: str = "3mf"  # "3mf" or "stl"
     scale_mm: float = 50.0  # Default size in mm
@@ -197,6 +201,25 @@ class PrintForgePipeline:
         optimized_mesh, opt_warnings = self._optimize_for_print(watertight_mesh)
         warnings.extend(opt_warnings)
         stages["optimization"] = time.time() - t0
+
+        # Stage 4.5: Texture (optional)
+        if self.config.apply_texture or (
+            self.config.output_format == "glb"
+            and Path(output_path).suffix.lower() == ".glb"
+        ):
+            logger.info("Stage 4.5: Applying texture...")
+            _progress("texture", 0.85)
+            t0 = time.time()
+            try:
+                from .texture import TextureMapper
+                mapper = TextureMapper()
+                optimized_mesh = mapper.apply_vertex_colors(
+                    optimized_mesh, image, method=self.config.texture_method
+                )
+                stages["texture"] = time.time() - t0
+            except Exception as e:
+                logger.warning(f"Texture application failed: {e}")
+                stages["texture"] = time.time() - t0
 
         # Stage 5: Export
         logger.info("Stage 5: Exporting...")
