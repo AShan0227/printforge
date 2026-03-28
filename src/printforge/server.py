@@ -1730,6 +1730,114 @@ async def remove_webhook(request: Request):
     return JSONResponse({"status": "removed"})
 
 
+# ── Smart Generate (verify-before-generate) ──────────────────────────
+
+@app.post("/api/v2/smart/analyze", tags=["Smart Generation"])
+async def smart_analyze(
+    request: Request,
+    image: UploadFile = File(...),
+    description: str = Form(""),
+):
+    """Step 1: Analyze image and suggest generation strategy."""
+    from .smart_generate import SmartGenerator
+
+    suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await image.read()
+        tmp.write(content)
+        input_path = tmp.name
+
+    generator = SmartGenerator()
+    analysis = generator.analyze(input_path, description)
+
+    verification = generator.prepare_verification(analysis)
+
+    return JSONResponse({
+        "description": analysis.description,
+        "category": analysis.category,
+        "keywords": analysis.keywords,
+        "confidence": analysis.confidence,
+        "needs_back_reference": analysis.needs_back_reference,
+        "search_queries": analysis.suggested_search_queries,
+        "recommended_config": verification.recommended_config,
+        "estimated_credits": verification.estimated_credits,
+        "estimated_time_s": verification.estimated_time_s,
+        "warnings": verification.warnings,
+        "input_path": input_path,  # For use in generate step
+    })
+
+
+@app.post("/api/v2/smart/generate", tags=["Smart Generation"])
+async def smart_generate(
+    request: Request,
+    image: UploadFile = File(...),
+    description: str = Form(""),
+    format: str = Form("glb"),
+    size_mm: float = Form(60.0),
+    category: str = Form("figure"),
+):
+    """Step 2: Generate 3D with smart config (after user reviews analysis)."""
+    from .smart_generate import SmartGenerator
+    from .tripo_expert import TripoExpert
+
+    suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await image.read()
+        tmp.write(content)
+        input_path = tmp.name
+
+    output_suffix = ".glb" if format == "glb" else f".{format}"
+    with tempfile.NamedTemporaryFile(suffix=output_suffix, delete=False) as tmp_out:
+        output_path = tmp_out.name
+
+    try:
+        generator = SmartGenerator()
+        analysis = generator.analyze(input_path, description)
+        verification = generator.prepare_verification(analysis)
+
+        def _sse_progress(stage: str, detail: str = ""):
+            from .sse import emit_generation_progress
+            emit_generation_progress("smart", stage, 0)
+
+        result = generator.generate(
+            input_path, verification, output_path,
+            progress_callback=_sse_progress,
+        )
+
+        # Also export STL for printing if requested
+        stl_path = None
+        if format == "stl" or format == "both":
+            import trimesh, io
+            stl_tmp = output_path.replace(".glb", ".stl")
+            loaded = trimesh.load(io.BytesIO(result.glb_data), file_type="glb")
+            if isinstance(loaded, trimesh.Scene):
+                mesh = trimesh.util.concatenate(
+                    [g for g in loaded.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                )
+            else:
+                mesh = loaded
+            trimesh.repair.fix_normals(mesh)
+            trimesh.repair.fill_holes(mesh)
+            mesh.export(stl_tmp, file_type="stl")
+            stl_path = stl_tmp
+
+        return FileResponse(
+            output_path,
+            media_type="application/octet-stream",
+            filename=f"printforge_smart{output_suffix}",
+            headers={
+                "X-PrintForge-Vertices": str(result.vertices),
+                "X-PrintForge-Faces": str(result.faces),
+                "X-PrintForge-Texture": str(result.has_texture),
+                "X-PrintForge-Credits": str(result.total_credits),
+                "X-PrintForge-Duration-Ms": str(int(result.generation_time_s * 1000)),
+                "X-PrintForge-Category": analysis.category,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Smart generation failed: {e}")
+
+
 # ── Async Generation ──────────────────────────────────────────────────
 
 @app.post("/api/v2/generate/async", tags=["Generation"])

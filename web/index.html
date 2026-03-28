@@ -128,6 +128,24 @@
             <button onclick="setMode('text')" id="btn-text" class="px-3 sm:px-4 py-2 rounded-lg bg-slate-700 text-sm font-medium">✍️ 文字转3D</button>
         </div>
 
+        <!-- Description Input (for Smart Generator) -->
+        <div class="mb-4">
+            <label class="text-xs text-slate-400 mb-1 block">物体描述（提升识别精度，例如：泡泡玛特 Molly 手办）</label>
+            <input type="text" id="description-input"
+                class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder-slate-500"
+                placeholder="告诉我这是什么，我会搜索参考图提升效果" />
+        </div>
+
+        <!-- Analysis Result (shown after Step 1) -->
+        <div id="analysis-result" class="hidden mb-4 bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="font-semibold text-sm">🔍 智能分析</h4>
+                <span id="analysis-category" class="text-xs px-2 py-0.5 bg-blue-600/30 text-blue-300 rounded-full"></span>
+            </div>
+            <div id="analysis-detail" class="text-xs text-slate-400 space-y-1"></div>
+            <div id="analysis-warnings" class="text-xs text-amber-400 mt-2 hidden"></div>
+        </div>
+
         <!-- Image Upload -->
         <div id="mode-image">
             <div id="drop-zone" class="drop-zone border-2 border-dashed border-slate-600 rounded-xl p-8 sm:p-12 text-center cursor-pointer hover:border-blue-400 transition-colors">
@@ -622,9 +640,9 @@
                 formData.append('image', selectedFile);
                 formData.append('format', document.getElementById('format').value);
                 formData.append('size_mm', document.getElementById('size').value);
-                formData.append('add_base', document.getElementById('add-base').checked);
-                formData.append('use_depth', document.getElementById('use-depth').checked);
-                endpoint = '/api/generate';
+                formData.append('description', document.getElementById('description-input').value || '');
+                formData.append('category', 'figure');
+                endpoint = '/api/v2/smart/generate';
                 body = formData;
             } else {
                 const formData = new FormData();
