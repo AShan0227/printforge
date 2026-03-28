@@ -590,16 +590,24 @@ class PrintForgePipeline:
                 return None
 
             # Step 4: Get model URL and download
-            model_info = poll_data.get("data", {}).get("output", {}).get("model")
-            if not model_info:
-                # Try alternate response format
-                model_info = poll_data.get("data", {}).get("result", {})
+            output = poll_data.get("data", {}).get("output", {})
+            result_data = poll_data.get("data", {}).get("result", {})
 
             model_url = None
-            if isinstance(model_info, str):
-                model_url = model_info
-            elif isinstance(model_info, dict):
-                model_url = model_info.get("url") or model_info.get("glb_url")
+            # Try multiple response formats
+            for source in [output, result_data]:
+                if not source:
+                    continue
+                for key in ["pbr_model", "model", "base_model"]:
+                    val = source.get(key)
+                    if isinstance(val, str) and val.startswith("http"):
+                        model_url = val
+                        break
+                    elif isinstance(val, dict) and val.get("url"):
+                        model_url = val["url"]
+                        break
+                if model_url:
+                    break
 
             if not model_url:
                 logger.warning(f"Tripo: no model URL in response: {poll_data}")
