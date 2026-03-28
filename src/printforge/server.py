@@ -381,7 +381,7 @@ async def generate(
             raise HTTPException(429, "API key quota exhausted. Upgrade your plan or contact support.")
 
     # Validate backend parameter
-    valid_backends = ("auto", "hunyuan3d", "api", "local", "placeholder")
+    valid_backends = ("auto", "trellis", "tripo", "hunyuan3d", "api", "local", "placeholder")
     if backend not in valid_backends:
         raise HTTPException(400, f"Invalid backend: {backend}. Must be one of: {', '.join(valid_backends)}")
 

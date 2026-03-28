@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/TripoSR"
+TRIPO_API_BASE = "https://api.tripo3d.ai/v2/openapi"
 
 
 @dataclass
@@ -43,7 +44,7 @@ class PipelineConfig:
     # TripoSR inference
     model_name: str = "stabilityai/TripoSR"
     device: str = "cuda"  # "cuda", "cpu", or "mps"
-    inference_backend: str = "auto"  # "auto", "trellis", "hunyuan3d", "api", "local", "placeholder"
+    inference_backend: str = "auto"  # "auto", "trellis", "tripo", "hunyuan3d", "api", "local", "placeholder"
 
     # Background removal
     remove_background: bool = True
@@ -342,7 +343,16 @@ class PrintForgePipeline:
                 return mesh
             logger.warning("Fallback: Hunyuan3D-2mini failed, trying TripoSR HF API...")
 
-        # Step 3: TripoSR via HuggingFace API
+        # Step 3: Tripo API (300 free credits/month, high quality)
+        if backend in ("auto", "tripo"):
+            mesh = self._infer_tripo_api(image)
+            if mesh is not None:
+                return mesh
+            if backend == "tripo":
+                raise RuntimeError("Tripo API inference failed and backend is 'tripo'")
+            logger.warning("Fallback: Tripo API failed, trying HF API...")
+
+        # Step 3.5: TripoSR via HuggingFace API
         if backend in ("auto", "api"):
             mesh = self._infer_hf_api(image)
             if mesh is not None:
@@ -497,6 +507,116 @@ class PrintForgePipeline:
             return mesh
         except Exception as e:
             logger.warning(f"Hunyuan3D-2mini inference failed: {e}")
+            return None
+
+    def _infer_tripo_api(self, image):
+        """Run inference via Tripo3D API (image → 3D model).
+
+        Tripo offers 300 free credits/month with high-quality output.
+        Flow: upload image → create task → poll → download GLB.
+        """
+        tripo_key = os.environ.get("TRIPO_API_KEY")
+        if not tripo_key:
+            logger.info("TRIPO_API_KEY not set — skipping Tripo backend")
+            return None
+
+        try:
+            import trimesh
+
+            headers = {"Authorization": f"Bearer {tripo_key}"}
+
+            # Step 1: Upload image
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            buf.seek(0)
+
+            upload_resp = requests.post(
+                f"{TRIPO_API_BASE}/upload",
+                headers=headers,
+                files={"file": ("input.png", buf, "image/png")},
+                timeout=30,
+            )
+            upload_resp.raise_for_status()
+            upload_data = upload_resp.json()
+
+            if upload_data.get("code") != 0:
+                logger.warning(f"Tripo upload failed: {upload_data}")
+                return None
+
+            file_token = upload_data["data"]["image_token"]
+            logger.info(f"Tripo: image uploaded, token={file_token[:20]}...")
+
+            # Step 2: Create task
+            task_resp = requests.post(
+                f"{TRIPO_API_BASE}/task",
+                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "type": "image_to_model",
+                    "file": {"type": "png", "file_token": file_token},
+                },
+                timeout=30,
+            )
+            task_resp.raise_for_status()
+            task_data = task_resp.json()
+
+            if task_data.get("code") != 0:
+                logger.warning(f"Tripo task creation failed: {task_data}")
+                return None
+
+            task_id = task_data["data"]["task_id"]
+            logger.info(f"Tripo: task created {task_id}, polling...")
+
+            # Step 3: Poll for completion (max 120s)
+            import time as _time
+            for _ in range(60):
+                _time.sleep(2)
+                poll_resp = requests.get(
+                    f"{TRIPO_API_BASE}/task/{task_id}",
+                    headers=headers,
+                    timeout=15,
+                )
+                poll_resp.raise_for_status()
+                poll_data = poll_resp.json()
+
+                status = poll_data.get("data", {}).get("status", "unknown")
+                if status == "success":
+                    break
+                elif status in ("failed", "cancelled"):
+                    logger.warning(f"Tripo task {status}: {poll_data}")
+                    return None
+                # else: queued, running — keep polling
+            else:
+                logger.warning("Tripo: task timed out after 120s")
+                return None
+
+            # Step 4: Get model URL and download
+            model_info = poll_data.get("data", {}).get("output", {}).get("model")
+            if not model_info:
+                # Try alternate response format
+                model_info = poll_data.get("data", {}).get("result", {})
+
+            model_url = None
+            if isinstance(model_info, str):
+                model_url = model_info
+            elif isinstance(model_info, dict):
+                model_url = model_info.get("url") or model_info.get("glb_url")
+
+            if not model_url:
+                logger.warning(f"Tripo: no model URL in response: {poll_data}")
+                return None
+
+            logger.info(f"Tripo: downloading GLB from {model_url[:60]}...")
+            glb_resp = requests.get(model_url, timeout=60)
+            glb_resp.raise_for_status()
+
+            mesh = trimesh.load(io.BytesIO(glb_resp.content), file_type="glb", force="mesh")
+            logger.info(
+                f"Tripo API OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces"
+            )
+            return mesh
+
+        except Exception as e:
+            logger.warning(f"Tripo API inference failed: {e}")
             return None
 
     def _infer_hf_api(self, image):
