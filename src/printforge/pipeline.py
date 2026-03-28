@@ -343,8 +343,15 @@ class PrintForgePipeline:
                 return mesh
             logger.warning("Fallback: Hunyuan3D-2mini failed, trying TripoSR HF API...")
 
-        # Step 3: Tripo API (300 free credits/month, high quality)
+        # Step 3: Tripo API — try multiview first if reference images available
         if backend in ("auto", "tripo"):
+            # Try multiview with synthesized views (better quality)
+            if self.config.multi_view:
+                mesh = self._infer_tripo_multiview(image)
+                if mesh is not None:
+                    return mesh
+                logger.warning("Multiview failed, falling back to single image...")
+
             mesh = self._infer_tripo_api(image)
             if mesh is not None:
                 return mesh
@@ -507,6 +514,116 @@ class PrintForgePipeline:
             return mesh
         except Exception as e:
             logger.warning(f"Hunyuan3D-2mini inference failed: {e}")
+            return None
+
+    def _infer_tripo_multiview(self, image):
+        """Run Tripo multiview_to_model with synthesized multi-angle views.
+
+        Uses Zero123++ or simple view synthesis to generate left/back/right views,
+        then submits all views to Tripo for higher-quality 3D reconstruction.
+        """
+        tripo_key = os.environ.get("TRIPO_API_KEY")
+        if not tripo_key:
+            return None
+
+        try:
+            import trimesh
+            from .multi_view import MultiViewEnhancer
+
+            headers = {"Authorization": f"Bearer {tripo_key}"}
+
+            # Step 1: Generate multi-angle views
+            logger.info("Tripo multiview: synthesizing views...")
+            enhancer = MultiViewEnhancer()
+            views = enhancer.enhance_from_pil(image)
+
+            # Upload all views
+            def upload(pil_img, name):
+                buf = io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                buf.seek(0)
+                r = requests.post(
+                    f"{TRIPO_API_BASE}/upload",
+                    headers=headers,
+                    files={"file": (name, buf, "image/png")},
+                    timeout=15,
+                )
+                r.raise_for_status()
+                return r.json()["data"]["image_token"]
+
+            # Upload front (original) + synthesized views
+            front_buf = io.BytesIO()
+            image.save(front_buf, format="PNG")
+            front_buf.seek(0)
+            front_token = requests.post(
+                f"{TRIPO_API_BASE}/upload", headers=headers,
+                files={"file": ("front.png", front_buf, "image/png")}, timeout=15,
+            ).json()["data"]["image_token"]
+
+            tokens = {"front": front_token}
+            view_map = {"left": "left", "back": "back", "right": "right"}
+            for view_name, key in view_map.items():
+                if key in views:
+                    tokens[view_name] = upload(views[key], f"{view_name}.png")
+
+            logger.info(f"Tripo multiview: uploaded {len(tokens)} views")
+
+            # Step 2: Create multiview task
+            task_files = [{"type": "png", "file_token": tokens["front"]}]
+            for vn in ["left", "back", "right"]:
+                if vn in tokens:
+                    task_files.append({"type": "png", "file_token": tokens[vn]})
+
+            task_resp = requests.post(
+                f"{TRIPO_API_BASE}/task",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"type": "multiview_to_model", "files": task_files},
+                timeout=15,
+            )
+            task_resp.raise_for_status()
+            task_data = task_resp.json()
+            if task_data.get("code") != 0:
+                logger.warning(f"Tripo multiview task failed: {task_data}")
+                return None
+
+            task_id = task_data["data"]["task_id"]
+            logger.info(f"Tripo multiview: task {task_id}, polling...")
+
+            # Step 3: Poll
+            import time as _time
+            for _ in range(60):
+                _time.sleep(3)
+                poll = requests.get(f"{TRIPO_API_BASE}/task/{task_id}", headers=headers, timeout=10)
+                status = poll.json().get("data", {}).get("status", "?")
+                if status == "success":
+                    break
+                elif status in ("failed", "cancelled"):
+                    logger.warning(f"Tripo multiview failed: {status}")
+                    return None
+
+            # Step 4: Download
+            output = poll.json().get("data", {}).get("output", {})
+            result_data = poll.json().get("data", {}).get("result", {})
+            model_url = None
+            for source in [output, result_data]:
+                for key in ["pbr_model", "model"]:
+                    val = source.get(key)
+                    if isinstance(val, str) and val.startswith("http"):
+                        model_url = val; break
+                    elif isinstance(val, dict) and val.get("url"):
+                        model_url = val["url"]; break
+                if model_url: break
+
+            if not model_url:
+                return None
+
+            glb = requests.get(model_url, timeout=60)
+            mesh = trimesh.load(io.BytesIO(glb.content), file_type="glb", force="mesh")
+            logger.info(f"Tripo multiview OK: {len(mesh.vertices)} verts, {len(mesh.faces)} faces")
+            return mesh
+
+        except Exception as e:
+            logger.warning(f"Tripo multiview failed: {e}")
             return None
 
     def _infer_tripo_api(self, image):
