@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
+from .tail_remover import remove_tail
 
 def _get_hf_token() -> Optional[str]:
     """Get HuggingFace token from env or ~/.openclaw/workspace/.hf_token file."""
@@ -42,7 +43,7 @@ class PipelineConfig:
     # TripoSR inference
     model_name: str = "stabilityai/TripoSR"
     device: str = "cuda"  # "cuda", "cpu", or "mps"
-    inference_backend: str = "auto"  # "auto", "hunyuan3d", "api", "local", "placeholder"
+    inference_backend: str = "auto"  # "auto", "trellis", "hunyuan3d", "api", "local", "placeholder"
 
     # Background removal
     remove_background: bool = True
@@ -171,6 +172,24 @@ class PrintForgePipeline:
         watertight_mesh = self._make_watertight(raw_mesh)
         stages["watertight"] = time.time() - t0
 
+        # Stage 3.5: Tail detection & removal
+        logger.info("Stage 3.5: Tail detection & removal...")
+        _progress("tail_removal", 0.62)
+        t0 = time.time()
+        tail_result = remove_tail(watertight_mesh)
+        stages["tail_removal"] = time.time() - t0
+        if tail_result.tail_detected:
+            tail_warn = (
+                f"Tail detected along {tail_result.tail_direction}: "
+                f"{tail_result.removed_percentage*100:.1f}% vertices removed"
+            )
+            logger.warning(tail_warn)
+            warnings.append(tail_warn)
+            watertight_mesh = trimesh.Trimesh(
+                vertices=tail_result.cleaned_verts,
+                faces=watertight_mesh.faces,
+            )
+
         # Stage 4: Print optimization
         logger.info("Stage 4: Print optimization...")
         _progress("optimization", 0.70)
@@ -257,6 +276,15 @@ class PrintForgePipeline:
             logger.info("Using placeholder mesh (configured)")
             return self._create_placeholder_mesh()
 
+        # Step 0: TRELLIS (best quality, CVPR 2025 — preferred over Hunyuan3D)
+        if backend in ("auto", "trellis"):
+            mesh = self._infer_trellis(image)
+            if mesh is not None:
+                return mesh
+            if backend == "trellis":
+                raise RuntimeError("TRELLIS inference failed and backend is 'trellis'")
+            logger.warning("Fallback: TRELLIS failed, trying Hunyuan3D-2...")
+
         # Step 1: Hunyuan3D-2 (full)
         if backend in ("auto", "hunyuan3d"):
             mesh = self._infer_hunyuan3d(image)
@@ -294,6 +322,33 @@ class PrintForgePipeline:
         # Step 5: Placeholder (last resort)
         logger.warning("All inference backends unavailable — using placeholder mesh")
         return self._create_placeholder_mesh()
+
+    def _infer_trellis(self, image):
+        """Run inference via TRELLIS (CVPR 2025) — best single-image-to-3D quality.
+
+        TRELLIS uses Structured Latent Representation (SLAT) with 2B parameters.
+        Unlike Hunyuan3D, it doesn't need fake multi-view synthesis, so it avoids
+        the "tail" artifact caused by contradictory synthetic views.
+        """
+        try:
+            from .trellis_backend import TrellisBackend
+        except ImportError:
+            logger.info("trellis_backend not available — skipping TRELLIS")
+            return None
+
+        try:
+            backend = TrellisBackend()
+            result = backend.generate(image)
+            if result is not None:
+                logger.info(
+                    f"TRELLIS inference OK: {result.vertices} verts, "
+                    f"{result.faces} faces"
+                )
+                return result.mesh
+            return None
+        except Exception as e:
+            logger.warning(f"TRELLIS inference failed: {e}")
+            return None
 
     def _infer_hunyuan3d(self, image):
         """Run inference via Hunyuan3D-2 Gradio Space with multi-view enhancement.
