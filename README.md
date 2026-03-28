@@ -70,7 +70,7 @@ printforge image photo.jpg -o model.3mf # Generate
                                   │
                     ┌─────────────▼───────────────┐
                     │      INFERENCE ENGINE        │
-                    │  TripoSR / Hunyuan3D / HF    │
+                    │  TRELLIS / Tripo / TripoSR   │
                     │  SDF → Marching Cubes        │
                     └─────────────┬───────────────┘
                                   │
@@ -217,25 +217,30 @@ All endpoints at `http://localhost:8000`.
 
 ## Roadmap
 
-### Done
+### Done ✅
 - [x] Image/text/video to 3D pipeline with watertight guarantee
-- [x] CLI (20 commands), Web UI, REST API + WebSocket
-- [x] Print optimizer, cost estimator, part splitter
-- [x] Quality scorer, mesh repair, failure predictor
+- [x] Multi-engine: TRELLIS (CVPR 2025), Tripo3D API, TripoSR, Hunyuan3D
+- [x] Depth-guided mesh enhancement (single-view quality boost)
+- [x] Texture mapping (projection + nearest-neighbor + UV)
+- [x] Tail artifact detection & removal
+- [x] CLI (20 commands), Web UI (dark/light, 3D preview, progress), REST API + SSE + WebSocket
+- [x] Print optimizer, cost estimator, part splitter, quality scorer, mesh repair, failure predictor
 - [x] Bambu Lab printer discovery & direct send
-- [x] Batch processing, caching, analytics
-- [x] Multi-printer profiles (8 printers)
-- [x] Security audit, rate limiting, content safety
+- [x] Async generation queue, batch processing, caching, analytics
+- [x] Multi-printer profiles (8 printers), i18n (en/zh/ja), error codes
+- [x] Security audit, rate limiting, content safety, API keys, billing
+- [x] CI/CD (GitHub Actions), Docker support
 
 ### Next
+- [ ] Tripo3D v3 model (higher quality)
 - [ ] iPhone LiDAR scan → print pipeline
+- [ ] On-device CoreML / MPS inference (Apple Silicon)
 - [ ] Model marketplace & community templates
 - [ ] Sketch to 3D (pen input)
 - [ ] FEA strength analysis
 - [ ] Multi-material color mapping
 - [ ] Prusa/Creality direct send (OctoPrint/Klipper)
 - [ ] Support structure optimizer
-- [ ] On-device CoreML inference (Apple Silicon)
 
 ---
 
@@ -247,12 +252,20 @@ All endpoints at `http://localhost:8000`.
 pip install printforge
 ```
 
-### From source
+### From source (recommended for Mac)
 
 ```bash
-git clone https://github.com/printforge/printforge.git
+git clone https://github.com/AShan0227/printforge.git
 cd printforge
-pip install -e '.[dev]'
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
+```
+
+### Environment variables
+
+```bash
+export TRIPO_API_KEY=your_tripo_key     # Tripo3D API (300 free/month)
+export HF_TOKEN=your_hf_token           # HuggingFace (for TRELLIS/TripoSR)
 ```
 
 ### Docker

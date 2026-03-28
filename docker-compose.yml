@@ -12,6 +12,7 @@ services:
       - ./web:/app/web:ro
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
+      - TRIPO_API_KEY=${TRIPO_API_KEY:-}
       - PRINTFORGE_JWT_SECRET=${PRINTFORGE_JWT_SECRET:-default-change-me}
       - PRINTFORGE_FEISHU_WEBHOOK=${PRINTFORGE_FEISHU_WEBHOOK:-}
     restart: unless-stopped

@@ -420,7 +420,11 @@ async def generate(
             use_depth=use_depth,
         )
         pipeline = PrintForgePipeline(config)
-        result = pipeline.run(input_path, output_path)
+        def _sse_progress(stage: str, pct: float):
+            from .sse import emit_generation_progress
+            emit_generation_progress("current", stage, pct)
+
+        result = pipeline.run(input_path, output_path, progress_callback=_sse_progress)
 
         # Record billing and store model
         user_id = api_key_obj.user_id if api_key_obj else "anonymous"

@@ -635,14 +635,17 @@
                 body = formData;
             }
 
-            // Start SSE progress listener before the request
-            const progressSource = new EventSource(API + '/api/v2/progress/stream');
-            progressSource.onmessage = (event) => {
+            // Start SSE progress listener
+            const progressSource = new EventSource(API + '/api/v2/events');
+            progressSource.addEventListener('generation.progress', (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    if (data.stage) setProgress(data.stage, data.detail);
+                    if (data.stage) setProgress(data.stage);
                 } catch {}
-            };
+            });
+            progressSource.addEventListener('generation.done', () => {
+                setProgress('done');
+            });
 
             // Simulated stage progress while waiting for response
             const stageTimer = setInterval(() => {
