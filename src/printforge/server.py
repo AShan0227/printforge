@@ -1838,6 +1838,132 @@ async def smart_generate(
         raise HTTPException(500, f"Smart generation failed: {e}")
 
 
+# ── Multi-Engine Compare ──────────────────────────────────────────────
+
+@app.post("/api/v2/smart/compare", tags=["Smart Generation"])
+async def smart_compare(
+    request: Request,
+    image: UploadFile = File(...),
+    engines: str = Form("tripo_p1,tripo_v3"),
+):
+    """Compare multiple 3D engines on the same image. Returns ranked results."""
+    from .multi_engine import MultiEngine
+
+    suffix = Path(image.filename or "upload.jpg").suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await image.read()
+        tmp.write(content)
+        input_path = tmp.name
+
+    engine = MultiEngine()
+    engine_list = [e.strip() for e in engines.split(",") if e.strip()]
+
+    loop = asyncio.get_event_loop()
+    from PIL import Image as PILImage
+    img = PILImage.open(input_path)
+    comparison = await loop.run_in_executor(
+        None, lambda: engine.compare(img, engine_list)
+    )
+
+    results = {}
+    for eng_id, result in comparison.results.items():
+        results[eng_id] = {
+            "engine": eng_id,
+            "success": result.success,
+            "vertices": result.vertices,
+            "faces": result.faces,
+            "has_texture": result.has_texture,
+            "quality_score": round(result.quality_score, 2),
+            "generation_time_s": round(result.generation_time_s, 1),
+            "credits_used": result.credits_used,
+            "file_size": result.file_size,
+            "error": result.error,
+        }
+
+    return JSONResponse({
+        "results": results,
+        "recommended": comparison.recommended,
+        "total_time_s": round(comparison.total_time_s, 1),
+        "total_credits": comparison.total_credits,
+    })
+
+
+# ── Multi-Angle Scan ─────────────────────────────────────────────────
+
+@app.post("/api/v2/scan/upload", tags=["Multi-Angle Scan"])
+async def scan_upload(
+    request: Request,
+    images: List[UploadFile] = File(...),
+):
+    """Upload multiple photos from different angles for high-quality reconstruction."""
+    from .multi_angle_scan import MultiAngleScanner
+
+    paths = []
+    for img_file in images:
+        suffix = Path(img_file.filename or "upload.jpg").suffix or ".jpg"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            content = await img_file.read()
+            tmp.write(content)
+            paths.append(tmp.name)
+
+    scanner = MultiAngleScanner()
+    session = scanner.create_session(paths)
+
+    return JSONResponse({
+        "views": [
+            {"path": v.path, "angle": v.view_angle, "confidence": v.confidence,
+             "size": f"{v.width}x{v.height}"}
+            for v in session.views
+        ],
+        "coverage": round(session.coverage_score, 2),
+        "has_front": session.has_front,
+        "has_back": session.has_back,
+        "estimated_credits": 50,
+    })
+
+
+@app.post("/api/v2/scan/generate", tags=["Multi-Angle Scan"])
+async def scan_generate(
+    request: Request,
+    images: List[UploadFile] = File(...),
+    format: str = Form("glb"),
+):
+    """Generate 3D from multi-angle photos."""
+    from .multi_angle_scan import MultiAngleScanner
+
+    paths = []
+    for img_file in images:
+        suffix = Path(img_file.filename or "upload.jpg").suffix or ".jpg"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            content = await img_file.read()
+            tmp.write(content)
+            paths.append(tmp.name)
+
+    scanner = MultiAngleScanner()
+    session = scanner.create_session(paths)
+
+    output_suffix = ".glb" if format == "glb" else f".{format}"
+    with tempfile.NamedTemporaryFile(suffix=output_suffix, delete=False) as tmp_out:
+        output_path = tmp_out.name
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: scanner.generate_from_scan(session, output_path)
+    )
+
+    return FileResponse(
+        output_path,
+        media_type="application/octet-stream",
+        filename=f"printforge_scan{output_suffix}",
+        headers={
+            "X-PrintForge-Vertices": str(result["vertices"]),
+            "X-PrintForge-Views": str(result["views_used"]),
+            "X-PrintForge-Coverage": str(result["coverage"]),
+            "X-PrintForge-Credits": str(result["credits"]),
+        },
+    )
+
+
 # ── Async Generation ──────────────────────────────────────────────────
 
 @app.post("/api/v2/generate/async", tags=["Generation"])

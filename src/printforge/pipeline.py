@@ -46,6 +46,9 @@ class PipelineConfig:
     device: str = "cuda"  # "cuda", "cpu", or "mps"
     inference_backend: str = "auto"  # "auto", "trellis", "tripo", "hunyuan3d", "api", "local", "placeholder"
 
+    # Auto-crop to subject
+    auto_crop: bool = True
+
     # Background removal
     remove_background: bool = True
     foreground_ratio: float = 0.85
@@ -152,6 +155,22 @@ class PrintForgePipeline:
         t0 = time.time()
         image = self._load_image(image_path)
         stages["load_image"] = time.time() - t0
+
+        # Stage 1.2: Auto-crop to subject
+        if self.config.auto_crop:
+            logger.info("Stage 1.2: Auto-cropping to subject...")
+            _progress("auto_crop", 0.08)
+            t0 = time.time()
+            try:
+                from .auto_crop import auto_crop
+                original_size = image.size
+                image = auto_crop(image, padding=0.12)
+                if image.size != original_size:
+                    logger.info(f"Auto-cropped: {original_size} → {image.size}")
+                stages["auto_crop"] = time.time() - t0
+            except Exception as e:
+                logger.warning(f"Auto-crop failed (non-fatal): {e}")
+                stages["auto_crop"] = time.time() - t0
 
         # Stage 1.5: Background removal
         if self.config.remove_background:
