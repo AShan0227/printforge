@@ -281,6 +281,11 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-PrintForge-Vertices", "X-PrintForge-Faces", "X-PrintForge-Watertight",
+        "X-PrintForge-Duration-Ms", "X-PrintForge-Multi-View",
+        "X-PrintForge-Stages", "X-PrintForge-Warnings",
+    ],
 )
 
 # v2.2 middleware
@@ -359,6 +364,7 @@ async def generate(
     add_base: bool = False,
     backend: str = "auto",
     multi_view: bool = False,
+    use_depth: bool = True,
 ):
     """Upload an image, get a 3D printable file.
 
@@ -411,6 +417,7 @@ async def generate(
             scale_mm=size_mm,
             add_base=add_base,
             multi_view=multi_view,
+            use_depth=use_depth,
         )
         pipeline = PrintForgePipeline(config)
         result = pipeline.run(input_path, output_path)
@@ -463,6 +470,8 @@ async def generate(
                 "X-PrintForge-Watertight": str(result.is_watertight),
                 "X-PrintForge-Duration-Ms": str(int(result.duration_ms)),
                 "X-PrintForge-Multi-View": str(multi_view),
+                "X-PrintForge-Stages": json.dumps(result.stages),
+                "X-PrintForge-Warnings": json.dumps(result.warnings),
             },
         )
     except RuntimeError as e:

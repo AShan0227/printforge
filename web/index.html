@@ -185,10 +185,14 @@
                     <option value="512">精细 (512)</option>
                 </select>
             </div>
-            <div class="flex items-end">
+            <div class="flex flex-col gap-2">
                 <label class="flex items-center gap-2 text-sm">
                     <input type="checkbox" id="add-base" class="rounded" />
                     <span>添加底座</span>
+                </label>
+                <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" id="use-depth" class="rounded" checked />
+                    <span>深度增强</span>
                 </label>
             </div>
         </div>
@@ -270,6 +274,21 @@
                     <div class="bg-slate-900 rounded-lg p-3">
                         <div class="text-xs text-slate-500">耗时</div>
                         <div id="stat-time" class="text-lg font-bold">-</div>
+                    </div>
+                </div>
+
+                <!-- Warnings -->
+                <div id="warnings-section" class="hidden mb-4">
+                    <div id="warnings-list" class="text-sm text-amber-400 bg-amber-900/20 rounded-lg p-3 space-y-1"></div>
+                </div>
+
+                <!-- Stage Timing Breakdown -->
+                <div id="stage-breakdown" class="hidden mb-4">
+                    <button onclick="toggleBreakdown()" class="text-xs text-slate-400 hover:text-slate-200 mb-2 flex items-center gap-1">
+                        <span id="breakdown-arrow">▶</span> Pipeline 详情
+                    </button>
+                    <div id="breakdown-content" class="hidden">
+                        <div id="stage-bars" class="space-y-1"></div>
                     </div>
                 </div>
 
@@ -560,24 +579,41 @@
 
     document.getElementById('text-input').oninput = updateGenerateButton;
 
+    // ---- Stage labels ----
+    const STAGE_LABELS = {
+        load_image: { label: '📷 加载图片', pct: 5 },
+        remove_background: { label: '✂️ 移除背景', pct: 15 },
+        inference: { label: '🧠 AI 3D 推理', pct: 40 },
+        multi_view_inference: { label: '🧠 多视角推理', pct: 40 },
+        watertight: { label: '🔒 水密转换', pct: 55 },
+        tail_removal: { label: '✂️ 尾部清理', pct: 65 },
+        depth_enhance: { label: '🔍 深度增强', pct: 72 },
+        optimization: { label: '⚙️ 打印优化', pct: 80 },
+        texture: { label: '🎨 纹理映射', pct: 88 },
+        export: { label: '📦 导出文件', pct: 95 },
+        done: { label: '✅ 完成', pct: 100 },
+    };
+
+    function setProgress(stage, extraText) {
+        const info = STAGE_LABELS[stage] || { label: stage, pct: 50 };
+        const text = extraText ? `${info.label} — ${extraText}` : info.label;
+        document.getElementById('progress-text').textContent = text;
+        document.getElementById('progress-bar').style.width = `${info.pct}%`;
+    }
+
     // ---- Generate ----
     async function generate() {
         const progress = document.getElementById('progress');
         const result = document.getElementById('result');
         const skeleton = document.getElementById('loading-skeleton');
         const btn = document.getElementById('generate-btn');
+        const startTime = Date.now();
 
         progress.classList.remove('hidden');
         skeleton.classList.remove('hidden');
         result.classList.add('hidden');
         btn.disabled = true;
-
-        const stages = ['图片分析中...', 'AI 推理中...', 'SDF 转换中...', '打印优化中...', '导出文件...'];
-        for (let i = 0; i < stages.length; i++) {
-            document.getElementById('progress-text').textContent = stages[i];
-            document.getElementById('progress-bar').style.width = `${(i + 1) / stages.length * 100}%`;
-            await new Promise(r => setTimeout(r, 500));
-        }
+        setProgress('load_image');
 
         try {
             let endpoint, body;
@@ -587,6 +623,7 @@
                 formData.append('format', document.getElementById('format').value);
                 formData.append('size_mm', document.getElementById('size').value);
                 formData.append('add_base', document.getElementById('add-base').checked);
+                formData.append('use_depth', document.getElementById('use-depth').checked);
                 endpoint = '/api/generate';
                 body = formData;
             } else {
@@ -598,21 +635,71 @@
                 body = formData;
             }
 
+            // Start SSE progress listener before the request
+            const progressSource = new EventSource(API + '/api/v2/progress/stream');
+            progressSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.stage) setProgress(data.stage, data.detail);
+                } catch {}
+            };
+
+            // Simulated stage progress while waiting for response
+            const stageTimer = setInterval(() => {
+                const elapsed = (Date.now() - startTime) / 1000;
+                if (elapsed < 2) setProgress('load_image');
+                else if (elapsed < 5) setProgress('remove_background');
+                else if (elapsed < 20) setProgress('inference', `${(elapsed - 5).toFixed(0)}s`);
+                else if (elapsed < 25) setProgress('watertight');
+                else if (elapsed < 30) setProgress('depth_enhance');
+                else if (elapsed < 35) setProgress('optimization');
+                else setProgress('export');
+            }, 500);
+
             const resp = await fetch(API + endpoint, {
                 method: 'POST',
                 body: body,
             });
 
+            clearInterval(stageTimer);
+            progressSource.close();
+
             if (!resp.ok) throw new Error(await resp.text());
 
+            setProgress('done');
             const blob = await resp.blob();
             const url = URL.createObjectURL(blob);
+            const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
 
             // Update stats
             document.getElementById('stat-vertices').textContent = resp.headers.get('X-PrintForge-Vertices') || '?';
             document.getElementById('stat-faces').textContent = resp.headers.get('X-PrintForge-Faces') || '?';
             document.getElementById('stat-watertight').textContent = resp.headers.get('X-PrintForge-Watertight') === 'True' ? '✅' : '⚠️';
-            document.getElementById('stat-time').textContent = `${(parseInt(resp.headers.get('X-PrintForge-Duration-Ms') || '0') / 1000).toFixed(1)}s`;
+            document.getElementById('stat-time').textContent = resp.headers.get('X-PrintForge-Duration-Ms')
+                ? `${(parseInt(resp.headers.get('X-PrintForge-Duration-Ms')) / 1000).toFixed(1)}s`
+                : `${totalTime}s`;
+
+            // Stage breakdown
+            const stagesHeader = resp.headers.get('X-PrintForge-Stages');
+            if (stagesHeader) renderStageBreakdown(stagesHeader);
+
+            // Warnings
+            const warningsHeader = resp.headers.get('X-PrintForge-Warnings');
+            const warningsSection = document.getElementById('warnings-section');
+            const warningsList = document.getElementById('warnings-list');
+            if (warningsHeader) {
+                try {
+                    const warns = JSON.parse(warningsHeader);
+                    if (warns.length > 0) {
+                        warningsSection.classList.remove('hidden');
+                        warningsList.innerHTML = warns.map(w => `<div>⚠️ ${w}</div>`).join('');
+                    } else {
+                        warningsSection.classList.add('hidden');
+                    }
+                } catch { warningsSection.classList.add('hidden'); }
+            } else {
+                warningsSection.classList.add('hidden');
+            }
 
             // Download link
             const ext = document.getElementById('format').value;
@@ -640,6 +727,44 @@
 
     function sendToBambu() {
         alert('🖨️ 拓竹直连功能开发中...\n\n目前请手动将文件导入 Bambu Studio。');
+    }
+
+    function toggleBreakdown() {
+        const content = document.getElementById('breakdown-content');
+        const arrow = document.getElementById('breakdown-arrow');
+        content.classList.toggle('hidden');
+        arrow.textContent = content.classList.contains('hidden') ? '▶' : '▼';
+    }
+
+    function renderStageBreakdown(stagesJson) {
+        try {
+            const stages = JSON.parse(stagesJson);
+            const container = document.getElementById('stage-bars');
+            const section = document.getElementById('stage-breakdown');
+            if (!stages || !Object.keys(stages).length) return;
+
+            section.classList.remove('hidden');
+            const maxTime = Math.max(...Object.values(stages));
+            const stageColors = {
+                load_image: '#64748b', remove_background: '#8b5cf6', inference: '#3b82f6',
+                multi_view_inference: '#3b82f6', watertight: '#06b6d4', tail_removal: '#f59e0b',
+                depth_enhance: '#10b981', optimization: '#f97316', texture: '#ec4899',
+                export: '#6366f1', cache_hit: '#22c55e',
+            };
+
+            container.innerHTML = Object.entries(stages).map(([name, secs]) => {
+                const pct = Math.max((secs / maxTime) * 100, 2);
+                const color = stageColors[name] || '#64748b';
+                const label = (STAGE_LABELS[name]?.label || name).replace(/^[^\s]+ /, '');
+                return `<div class="flex items-center gap-2 text-xs">
+                    <span class="w-20 text-slate-400 text-right truncate">${label}</span>
+                    <div class="flex-1 bg-slate-900 rounded-full h-3 overflow-hidden">
+                        <div class="h-full rounded-full transition-all duration-300" style="width:${pct}%; background:${color}"></div>
+                    </div>
+                    <span class="w-12 text-slate-500">${secs.toFixed(2)}s</span>
+                </div>`;
+            }).join('');
+        } catch {}
     }
 
     // ---- Onboarding ----

@@ -89,7 +89,7 @@ class TrellisBackend:
             hf_token = _get_hf_token()
             kwargs = {"verbose": False}
             if hf_token:
-                kwargs["hf_token"] = hf_token
+                kwargs["token"] = hf_token
                 logger.info("TRELLIS: Using authenticated HF access")
             else:
                 logger.info("TRELLIS: Using anonymous access (may have quota limits)")

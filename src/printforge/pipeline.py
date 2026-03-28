@@ -66,6 +66,11 @@ class PipelineConfig:
     multi_view: bool = False  # Generate multiple views for better reconstruction
     multi_view_count: int = 4  # front/back/left/right
 
+    # Depth enhancement
+    use_depth: bool = True  # Use depth estimation to enhance 3D reconstruction
+    depth_weight: float = 0.3  # How much depth map influences vertex displacement (0-1)
+    depth_model: str = ""  # HF model for depth; empty = auto
+
     # Texture
     apply_texture: bool = False  # Apply image colors to mesh
     texture_method: str = "projection"  # "projection" or "nearest"
@@ -193,6 +198,19 @@ class PrintForgePipeline:
                 vertices=tail_result.cleaned_verts,
                 faces=watertight_mesh.faces,
             )
+
+        # Stage 3.7: Depth-guided enhancement
+        if self.config.use_depth and self.config.inference_backend != "placeholder":
+            logger.info("Stage 3.7: Depth-guided mesh enhancement...")
+            _progress("depth_enhance", 0.65)
+            t0 = time.time()
+            try:
+                watertight_mesh, depth_warns = self._apply_depth_enhancement(watertight_mesh, image)
+                warnings.extend(depth_warns)
+                stages["depth_enhance"] = time.time() - t0
+            except Exception as e:
+                logger.warning(f"Depth enhancement failed (non-fatal): {e}")
+                stages["depth_enhance"] = time.time() - t0
 
         # Stage 4: Print optimization
         logger.info("Stage 4: Print optimization...")
@@ -682,6 +700,116 @@ class PrintForgePipeline:
             trimesh.repair.fill_holes(mesh)
             return mesh
     
+    def _apply_depth_enhancement(self, mesh, image):
+        """Enhance mesh geometry using depth estimation.
+
+        Uses estimated depth map to displace mesh vertices along their normals,
+        adding geometric detail that single-view 3D reconstruction misses
+        (especially for the back/sides of objects).
+
+        Args:
+            mesh: trimesh.Trimesh — the watertight mesh
+            image: PIL.Image — original input image
+
+        Returns:
+            (enhanced_mesh, warnings)
+        """
+        import trimesh
+        from .depth_estimator import DepthEstimator
+
+        warnings = []
+
+        try:
+            estimator = DepthEstimator(model=self.config.depth_model or None)
+            depth_result = estimator.estimate(image)
+        except Exception as e:
+            warnings.append(f"Depth estimation failed: {e}")
+            return mesh, warnings
+
+        depth_map = depth_result.depth_map
+        depth_ratio = depth_result.estimated_depth_ratio
+        weight = self.config.depth_weight
+
+        logger.info(
+            f"Depth enhancement: ratio={depth_ratio:.2f}, weight={weight}, "
+            f"map shape={depth_map.shape}"
+        )
+
+        # Only enhance if depth ratio suggests the object has meaningful depth
+        if depth_ratio < 0.05:
+            warnings.append("Depth ratio too low — object appears flat, skipping enhancement")
+            return mesh, warnings
+
+        verts = mesh.vertices.copy()
+
+        # Compute vertex normals
+        if not hasattr(mesh, 'vertex_normals') or mesh.vertex_normals is None:
+            mesh.fix_normals()
+        normals = mesh.vertex_normals
+
+        # Project each vertex to image space to sample depth
+        mins = verts.min(axis=0)
+        maxs = verts.max(axis=0)
+        extents = maxs - mins
+        extents[extents < 1e-6] = 1.0
+
+        h, w = depth_map.shape
+
+        # Normalize vertices to [0, 1] range → map to depth map pixel coords
+        # Assume mesh is roughly aligned: X=width, Y=height, Z=depth
+        uv_x = ((verts[:, 0] - mins[0]) / extents[0] * (w - 1)).astype(int).clip(0, w - 1)
+        uv_y = ((verts[:, 1] - mins[1]) / extents[1] * (h - 1)).astype(int).clip(0, h - 1)
+        # Flip Y because image coordinates are top-down
+        uv_y = (h - 1) - uv_y
+
+        # Sample depth for each vertex
+        sampled_depth = depth_map[uv_y, uv_x]
+
+        # Compute displacement: vertices closer to camera get pushed out more
+        # Invert depth (0=near → 1 displacement, 1=far → 0 displacement)
+        displacement = (1.0 - sampled_depth) * weight * depth_ratio
+
+        # Scale displacement by mesh extent (Z axis = depth)
+        z_extent = extents[2] if extents[2] > 1e-6 else extents.max()
+        displacement_3d = normals * displacement[:, np.newaxis] * z_extent
+
+        # Apply displacement
+        enhanced_verts = verts + displacement_3d
+
+        # Create enhanced mesh
+        enhanced_mesh = trimesh.Trimesh(
+            vertices=enhanced_verts,
+            faces=mesh.faces.copy(),
+            process=True,
+        )
+
+        # Copy vertex colors if present
+        if hasattr(mesh, 'visual') and mesh.visual is not None:
+            try:
+                enhanced_mesh.visual = mesh.visual.copy()
+            except Exception:
+                pass
+
+        # Sanity check: enhanced mesh should be roughly same size
+        original_vol = mesh.volume if mesh.is_watertight else 0
+        enhanced_vol = enhanced_mesh.volume if enhanced_mesh.is_watertight else 0
+        if original_vol > 0 and enhanced_vol > 0:
+            vol_change = abs(enhanced_vol - original_vol) / original_vol
+            if vol_change > 2.0:
+                warnings.append(
+                    f"Depth enhancement caused {vol_change*100:.0f}% volume change — "
+                    f"reverting to original mesh"
+                )
+                return mesh, warnings
+
+        vert_delta = np.linalg.norm(enhanced_verts - verts, axis=1)
+        logger.info(
+            f"Depth enhancement applied: mean displacement={vert_delta.mean():.4f}, "
+            f"max={vert_delta.max():.4f}, verts={len(verts)}"
+        )
+
+        return enhanced_mesh, warnings
+
     def _optimize_for_print(self, mesh):
         """Optimize mesh for 3D printing."""
         import trimesh

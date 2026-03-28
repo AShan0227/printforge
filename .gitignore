@@ -29,3 +29,4 @@ data/usage.json
 # Cache
 .printforge/
 model_cache/
+*.pyc
