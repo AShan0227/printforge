@@ -16,9 +16,10 @@ def auto_crop(image: Image.Image, padding: float = 0.1) -> Image.Image:
       2. Apply Gaussian blur to suppress noise.
       3. Sobel edge detection via scipy.ndimage.
       4. Threshold → binary edge map.
-      5. Find largest connected component → bounding box.
-      6. Expand bbox by `padding` fraction.
-      7. If detection fails or bbox is tiny return original image.
+      5. Dilate to bridge small gaps.
+      6. Find largest connected component → bounding box.
+      7. Expand bbox by `padding` fraction.
+      8. If detection fails or bbox is tiny return original image.
 
     Args:
         image: PIL Image (any mode).
@@ -56,10 +57,10 @@ def auto_crop(image: Image.Image, padding: float = 0.1) -> Image.Image:
 
     # Find the component with the largest area (most edge pixels)
     sizes = ndimage.sum(binary, labeled, range(1, num_features + 1))
-    max_idx = int(np.argmax(sizes)) + 1
+    max_idx = int(np.argmax(sizes)) + 1  # labels start at 1
 
-    # Bounding box of the largest component
-    slices = ndimage.find_objects(labeled == max_idx)[0]
+    # Bounding box of the largest component — pass labeled array + max_label
+    slices = ndimage.find_objects(labeled, max_label=max_idx)[0]
     y0, y1 = slices[0].start, slices[0].stop
     x0, x1 = slices[1].start, slices[1].stop
 

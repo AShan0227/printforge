@@ -31,7 +31,7 @@ def centered_rectangle_image(
 
 
 def noisy_image_with_shape(size=(300, 300), seed=42) -> Image.Image:
-    """Random noise background + bright cross in the center."""
+    """Random noise background + bright circle in the centre."""
     rng = np.random.default_rng(seed)
     arr = rng.integers(0, 60, (*size[::-1], 3), dtype=np.uint8)
     img = Image.fromarray(arr, mode="RGB")
@@ -51,7 +51,7 @@ def test_returns_original_on_blank_image():
     img = solid_image()
     result = auto_crop(img)
     assert result.size == img.size
-    assert list(result.getdata()) == list(img.getdata())
+    assert list(img.getdata()) == list(result.getdata())
 
 
 def test_crops_to_centered_rectangle():

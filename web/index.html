@@ -584,6 +584,8 @@
         };
         reader.readAsDataURL(file);
         updateGenerateButton();
+        // Auto-analyze after short delay
+        setTimeout(analyzeImage, 300);
     }
 
     function updateGenerateButton() {
@@ -592,6 +594,43 @@
             btn.disabled = !selectedFile;
         } else {
             btn.disabled = !document.getElementById('text-input').value.trim();
+        }
+    }
+
+    // Auto-analyze on file upload
+    async function analyzeImage() {
+        if (!selectedFile) return;
+        const panel = document.getElementById('analysis-result');
+        const detail = document.getElementById('analysis-detail');
+        const cat = document.getElementById('analysis-category');
+        const warnings = document.getElementById('analysis-warnings');
+
+        try {
+            const formData = new FormData();
+            formData.append('image', selectedFile);
+            formData.append('description', document.getElementById('description-input').value || '');
+
+            const resp = await fetch(API + '/api/v2/smart/analyze', { method: 'POST', body: formData });
+            if (!resp.ok) { panel.classList.add('hidden'); return; }
+
+            const data = await resp.json();
+            cat.textContent = data.category;
+            detail.innerHTML = [
+                `<div>📦 识别为: <strong>${data.description || '未知物体'}</strong></div>`,
+                `<div>🔍 建议搜索: ${(data.search_queries || []).slice(0,2).map(q => `<code class="text-xs">${q}</code>`).join(', ')}</div>`,
+                `<div>💰 预计消耗: ~${data.estimated_credits} credits / ~${data.estimated_time_s}s</div>`,
+                data.needs_back_reference ? '<div>⚠️ 需要背面参考 — 建议补充物体描述</div>' : '',
+            ].filter(Boolean).join('');
+
+            if (data.warnings && data.warnings.length) {
+                warnings.classList.remove('hidden');
+                warnings.innerHTML = data.warnings.map(w => `⚠️ ${w}`).join('<br>');
+            } else {
+                warnings.classList.add('hidden');
+            }
+            panel.classList.remove('hidden');
+        } catch {
+            panel.classList.add('hidden');
         }
     }
 
